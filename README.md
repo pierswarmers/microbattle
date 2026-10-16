@@ -1,129 +1,124 @@
 # Micro Battle
 
-Toy-tank battles for up to four players on one screen, with bots filling the empty seats. It's written in plain WebGL2 and WebAudio with no libraries, assets or build step.
+A networked 3D toy-tank battle for up to four players, with bots filling any empty seats. Each player plays on their own machine. It uses only WebGL2, WebAudio and Node built-ins: no libraries, no assets and no build step.
+
+## Running a game
+
+Start the server:
 
 ```bash
 node microbattle.js
 ```
 
-This starts a small local server and opens the game in your browser. You need Node 18 or newer and a browser with WebGL2.
+The server prints its address on your network, for example `http://192.168.1.20:8080/`. Friends open that address in their browser to join. Then:
 
-## Camera modes
+- In the lobby, everyone picks a vehicle.
+- The match starts when everyone is ready, or when anyone presses **Enter**.
+- Empty seats are filled with bots.
+- Players can join in the middle of a match and take over a bot's seat. If a player leaves, a bot takes over their tank.
 
-- **Bird's-eye** (`--mode birdseye`): a shared top-down camera, Micro Machines style, with a big world and small tanks. The camera follows the players. When they get too far apart to share one screen it splits automatically, and it merges again when they come back together.
-- **Tank commander** (`--mode commander`): each player looks through their own gunner's sight. The sight shows a reticle, range and elevation readouts, a compass, zoom and a hull-direction indicator. The screen splits into one view per player.
+The server binds `0.0.0.0` by default so it can be reached from your network. Use `--host 127.0.0.1` to keep it on this machine only.
 
-## Options
+## Views
 
-Every setting can be passed on the command line. Run `node microbattle.js --help` for the full list.
+Press **C** to switch views, unless the server fixed the view with `--mode`.
 
-| Option | Default | What it does |
-|---|---|---|
-| `--mode birdseye\|commander` | birdseye | Camera mode |
-| `--players N` | 1 | Number of human players already joined (0–4). Others can join in the lobby |
-| `--bots N\|auto` | auto | Number of bots. `auto` fills the match up to 4 tanks |
-| `--tanks a,b,..` | – | Tank for each player, P1 to P4: `hornet`, `trooper`, `bulldog`, `thumper`, `longshot` |
-| `--bot-tanks a,b,..` | random | Tanks for the bots |
-| `--difficulty easy\|normal\|hard` | normal | Bot skill |
-| `--map-size N` / `--seed N` / `--trees F` | 360 / random / 1 | Map size, map seed and scenery density |
-| `--score-limit N` / `--time-limit S` / `--lives N` | 10 / 300 / 0 | Win conditions. Setting `--lives` above 0 makes it last tank standing |
-| `--respawn S` | 3.5 | Seconds before a destroyed tank respawns |
-| `--no-pickups` / `--no-powerups` / `--airdrop S` | on / on / 35 | Pickups, power-ups, and seconds between supply drops |
-| `--no-lobby` / `--lobby-timeout S` | lobby on | Skip the join lobby, or start it automatically after S seconds |
-| `--split` | auto | Always use split-screen in bird's-eye view |
-| `--zoom N` / `--max-zoom N` | 52 / 150 | Bird's-eye camera height |
-| `--no-stabilizer` | on | Turret turns with the hull instead of holding its aim |
-| `--quality low\|medium\|high` / `--no-shadows` | medium | Graphics settings |
-| `--volume F` / `--no-music` / `--mute` | 0.7 | Audio settings |
-| `--port N` / `--host H` / `--no-open` | 8080 | Server settings |
-
-Examples:
-
-```bash
-node microbattle.js --mode commander --players 2 --tanks bulldog,longshot
-node microbattle.js --players 0 --difficulty hard          # watch four bots fight
-node microbattle.js --players 3 --no-lobby --lives 3 --map-size 500 --seed 42
-```
-
-You can also set options in the page URL, for example `?mode=commander&players=2`.
+| View | What you see |
+|---|---|
+| **Chase cam** | The camera sits slightly above and behind your tank, locked to the turret direction. |
+| **Commander** | The gunner's sight, with a reticle, range readout, compass, zoom and a hull-direction indicator. The heat seeker can lock on in this view. |
+| **Bird's-eye** | A high overview of the battlefield. Scroll to zoom. |
 
 ## Controls
 
-| | Drive | Turret | Barrel | Fire | Weapon | Zoom |
-|---|---|---|---|---|---|---|
-| P1 | W A S D | Q E | R F | Space | C | V |
-| P2 | I J K L | U O | Y H | N | M | B |
-| P3 | Arrow keys | , . | ] ' | Enter | \\ | / |
-| P4 | Gamepad | | | | | |
-
-Player 1 can also use the mouse:
-
-- **Bird's-eye:** point to aim, click to fire, scroll to change weapon.
-- **Commander:** click the screen to lock the mouse for mouse-look.
-
-Gamepads work for any player:
-
-| Control | Gamepad |
-|---|---|
-| Drive | Left stick |
-| Aim | Right stick |
-| Fire | RT or A |
-| Change weapon | LB or RB |
-| Zoom | LT |
-
-Other keys:
-
 | Key | Action |
 |---|---|
-| Esc or P | Pause |
-| `` ` `` | Mute |
-| X | Debug overlay |
+| **W A S D** | Drive |
+| **← →** | Turn the turret |
+| **↑ ↓** | Raise or lower the barrel. For heat seekers and air strikes, this sets the range instead. |
+| **Space** | Fire |
+| **Q / E** | Previous / next weapon. **1–8** pick a weapon directly. |
+| **C** | Change view |
+| **V** | Zoom (commander view) |
+| **G** | Throw a smoke grenade |
+| **M** | Mute |
+| **Esc** | Help |
 
-In the lobby:
+You can also use the mouse:
 
-- Press your fire key to join.
-- Steer left or right to choose a tank.
-- Press **G** (or Start on a gamepad) to begin.
+- **Chase and commander views:** click to capture the mouse, then move it to aim.
+- **Bird's-eye view:** point to aim and click to fire.
 
-## Tanks
+A gamepad also works.
 
-| Tank | Role | How to play it |
+## Vehicles
+
+| Vehicle | Style | Loadout |
 |---|---|---|
-| Hornet | Scout | Very fast and fragile. Rapid-fire machine gun, plus mines to drop when you're being chased |
-| Trooper | Medium | All-rounder. Cannon plus homing rockets |
-| Bulldog | Heavy | Slow and tough. Huge cannon, flamethrower, and heavy damage when it rams |
-| Thumper | Artillery | Mortar that arcs over cover, with a machine gun for close defence |
-| Longshot | Sniper | Railgun that pierces through tanks, and a deep zoom |
+| Scout | Fast flanker and spotter, fragile | Rapid fire, flamethrower, air strike, 4 smoke grenades |
+| Standard | All-rounder | Standard rounds, high velocity, heat seeker, cluster |
+| Artillery | Lobs shells over cover from long range, weak up close | Standard rounds (high arc), cluster, heat seeker, air strike |
+| Super Heavy | Slow and heavily armoured, rams hard | Standard rounds (bigger gun), high velocity, flamethrower, MASSIVE |
 
-## Pickups
+Weapon crates and supply drops can add any weapon to any vehicle.
 
-- **Repair kits** restore health.
-- **Ammo packs** refill your ammunition.
-- **Weapon crates** give you rockets, mines, a flamer, a railgun, a mortar or a machine gun.
-- **Power-ups:**
-  - **Turbo:** extra speed.
-  - **Shield:** absorbs damage.
-  - **Double Damage:** your hits do twice the damage.
-  - **Rapid Fire:** faster reloading.
-  - **Ghost:** bots ignore you.
-- **Supply drops** parachute in from time to time.
-- **Crates and red barrels** can be destroyed. Barrels explode in chain reactions.
+## Weapons
 
-## Project layout
+| Weapon | Behaviour |
+|---|---|
+| Standard | The all-purpose shell. Every vehicle except the scout has it. |
+| High Velocity | Almost no arc and very fast. Heavy recoil and knockback, and few rounds. |
+| Heat Seeker | Fired on a high arc. If you lock on to a target in commander view, it dives onto them. Trees and smoke protect the target. |
+| MASSIVE | One shell, with a mushroom cloud that flattens everything nearby. |
+| Cluster | Bursts just before it lands and scatters a ring of 12 bomblets. |
+| Flamethrower | Very powerful at close range. Heat builds while you fire, and too much heat can set your own fuel on fire. |
+| Rapid Fire | Near machine-gun rate of fire on a shallow arc. The spread grows and the barrel kicks, so fire in bursts. |
+| Air Strike | Marks a zone that every player can see. Bombers carpet-bomb it 5 seconds later. 20-second cooldown. |
+| Smoke grenades | A limited supply. Smoke blocks line of sight and breaks heat-seeker locks. |
+
+Balance is measured with `node tools/balance.mjs`. It covers:
+
+- Per-weapon damage per second and hit rate against still and moving targets.
+- Duels between every pair of vehicles.
+- Air strike escape times. The zone is sized so a Super Heavy only just makes it out.
+- How long the flamethrower runs before its fuel ignites.
+
+## Server options
+
+Run `node microbattle.js --help` for the full list.
+
+| Option | Default | What it does |
+|---|---|---|
+| `--mode any\|chase\|commander\|birdseye` | any | Fix the view for everyone, or let each player choose |
+| `--players N` | 0 | Start automatically once N players have joined |
+| `--bots N\|auto` / `--bot-tanks a,b` / `--difficulty easy\|normal\|hard` | auto / random / normal | Bot settings |
+| `--no-lobby` | lobby on | Start straight away with bots; players join while the match runs |
+| `--map-size N` / `--seed N` / `--trees F` | 360 / random / 1 | Map size, seed and tree density |
+| `--score-limit N` / `--time-limit S` / `--lives N` / `--respawn S` | 10 / 300 / 0 / 3.5 | Match rules |
+| `--no-pickups` / `--no-powerups` / `--airdrop S` | on / on / 35 | Pickups, power-ups and supply drops |
+| `--zoom N` | 120 | Bird's-eye camera height |
+| `--quality low\|medium\|high` | medium | Graphics quality |
+| `--port N` / `--host H` / `--no-open` | 8080 / 0.0.0.0 | Server settings |
+| `--debug` | off | Testing only: players spawn with every weapon |
+
+## Development tools
+
+```bash
+node tools/balance.mjs all                     # weapon / vehicle / air strike / flamer balance tables
+node tools/sim.mjs --seconds 240 --runs 4      # headless bot matches with per-weapon statistics
+node tools/shot.mjs script.json                # starts the server, drives one or more headless browser clients, takes screenshots
+```
+
+## How it's built
 
 ```
-microbattle.js     CLI launcher and static server (Node built-ins only)
-public/index.html  page shell
-public/js/
-  main.js     boot, config, test hooks (window.MB)
-  config.js   option definitions shared by the CLI and the browser
-  game.js     match flow, tanks, physics, weapons, pickups, cameras
-  ai.js       bot brains: targeting, A* navigation, ballistics
-  world.js    terrain, ponds, paths, scenery, collision and nav grids
-  gl.js       instanced WebGL2 renderer (shadows, fog, sky, toon fire)
-  models.js   procedural low-poly meshes   geo.js  geometry builder
-  fx.js       particles, decals, comic pop text   audio.js  synthesized SFX and music
-  hud.js      HUD, gunner scope, minimap, lobby, menus
-  input.js    keyboard, mouse and gamepad   defs.js  tank, weapon and pickup data
-tools/shot.mjs  headless Chromium screenshot/test driver (DevTools protocol, zero deps)
+microbattle.js        CLI, static server, WebSocket upgrade
+server/ws.js          minimal RFC 6455 WebSocket implementation
+server/room.js        lobby and seats, 60 Hz authoritative simulation, 30 Hz snapshots and events
+public/js/sim.js      game rules: tanks, physics, weapons, pickups, air strikes, smoke (runs on the server)
+public/js/ai.js       bots: A* navigation, ballistics, seeker locks, smoke and escaping strikes
+public/js/world.js    seeded terrain, scenery and nav grid; server and clients build an identical world
+public/js/client.js   networking, interpolation, turret prediction, cameras, effects and audio events
+public/js/hud.js      HUD, gunner scope, lock-on, minimap, lobby and menus
+public/js/gl.js, models.js, geo.js, fx.js, audio.js, input.js, defs.js, config.js
 ```

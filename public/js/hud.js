@@ -1,16 +1,18 @@
-// 2D overlay: lobby, scoreboard, player panels, gunner scope, minimap, labels, comic pop-text, menus.
-import { TANK_TYPES, TANK_ORDER, WEAPONS, POWERUPS, PLAYER_COLORS } from './defs.js';
-import { KEYMAPS } from './input.js';
+// 2D overlay for one player: lobby, scoreboard, weapon panel, gunner scope, chase/bird's-eye reticles,
+// lock-on, air strike warnings, minimap, labels, comic pop-text, help and game over.
+import { TANK_TYPES, WEAPONS, WEAPON_ORDER, POWERUPS, PLAYER_COLORS } from './defs.js';
+import { CONTROLS_HELP } from './input.js';
+import { VIEW_NAMES } from './client.js';
 import { m4, clamp, wrapAngle } from './math.js';
 
 const FONT = '"Arial Rounded MT Bold", "Trebuchet MS", "Verdana", sans-serif';
 const COMIC = 'Impact, "Arial Black", "Haettenschweiler", sans-serif';
-const JOIN_KEYS = ['SPACE', 'N', 'ENTER', 'GAMEPAD A'];
+const KILL_ICONS = { standard: '💥', highvel: '⚡', seeker: '🚀', massive: '☢️', cluster: '🎆', flame: '🔥', burn: '🔥', fuel: '⛽', rapid: '🔫', strike: '✈️', ram: '🐏', barrel: '🛢️', chain: '💥', blast: '💥' };
 
 export class HUD {
-  constructor(canvas, game) {
+  constructor(canvas, client) {
     this.c = canvas;
-    this.g = game;
+    this.g = client;
     this.ctx = canvas.getContext('2d');
     this.tmp = [0, 0, 0, 0];
     this.miniCache = null;
@@ -30,64 +32,62 @@ export class HUD {
     return { x: v.x + (nx * 0.5 + 0.5) * v.w, y: v.y + (1 - (ny * 0.5 + 0.5)) * v.h, nx, ny, w: p[3] };
   }
 
-  draw(views, dt) {
+  draw(v, dt) {
     const ctx = this.ctx, g = this.g;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     const W = this.c.clientWidth, H = this.c.clientHeight;
+    this.W = W; this.H = H;
     ctx.clearRect(0, 0, W, H);
-    if (g.state === 'lobby') { this.drawLobby(W, H); return; }
-    for (const v of views) {
-      ctx.save();
-      ctx.beginPath(); ctx.rect(v.x, v.y, v.w, v.h); ctx.clip();
-      this.drawWorldLabels(v);
-      if (v.kind === 'commander') this.drawScope(v);
-      if (v.kind === 'overview') this.label(v.x + v.w / 2, v.y + v.h - 16, 'BATTLEFIELD OVERVIEW', 13, '#fff', 'center');
-      if (v.tank && (v.kind === 'commander' || views.length > 1 || g.cfg.split)) {
-        const k = v.h < 420 ? 0.72 : 1; // quarter views get a smaller panel
-        ctx.save(); ctx.translate(v.x + 12, v.y + v.h - 12); ctx.scale(k, k);
-        this.drawPanel(v.tank, 0, 0, 'bl', v);
-        ctx.restore();
-      }
-      if (v.tank && v.kind === 'commander') this.drawMinimap(v.x + v.w - 12, v.y + v.h - 12, Math.min(150, v.w * (views.length > 1 ? 0.15 : 0.22)), v.tank);
-      if (v.tank && !v.tank.alive) this.drawDeadNotice(v);
-      ctx.restore();
-      if (views.length > 1) { ctx.strokeStyle = 'rgba(20,20,30,0.9)'; ctx.lineWidth = 3; ctx.strokeRect(v.x, v.y, v.w, v.h); }
+    if (g.status !== 'open') this.banner(W / 2, H - 40, g.status === 'closed' ? 'Lost connection — reconnecting…' : 'Connecting…', '#ffd84d');
+    if (g.state === 'lobby' || g.state === 'connecting') { this.drawLobby(W, H); return; }
+    const me = g.me;
+    this.drawWorldLabels(v);
+    if (me && me.net.al && g.state !== 'over') {
+      if (v.kind === 'commander') this.drawScope(v, me);
+      else if (v.kind === 'chase') this.drawChaseReticle(v, me);
+      else if (v.kind === 'birdseye') this.drawBirdsReticle(v, me);
     }
-    const shared = views.length === 1 && views[0].kind === 'birds' && !g.cfg.split && g.humans.length > 0;
-    if (shared) {
-      const corners = ['bl', 'br', 'tl', 'tr'];
-      g.humans.forEach((t, i) => {
-        const c = corners[i];
-        const x = c[1] === 'l' ? 12 : W - 12, y = c[0] === 'b' ? H - 12 : 70;
-        this.drawPanel(t, x, y, c, views[0]);
-      });
-      this.drawOffscreen(views[0]);
-      if (g.humans.length === 0) this.label(W / 2, H - 20, 'SPECTATING — ALL BOTS', 14, 'rgba(255,255,255,0.8)', 'center');
-      this.drawMinimap(W - 12, H - 12 - (g.humans.length > 1 ? 150 : 0), 150, null);
-    }
+    if (me && !me.net.al && g.state !== 'over') this.drawDeadNotice(me, W, H);
+    this.drawStrikeWarnings(v, me, W, H);
+    if (me) this.drawPanel(me, 12, H - 12);
+    this.drawMinimap(W - 12, H - 12, Math.min(170, W * 0.16), me);
     this.drawScoreboard(W);
     this.drawKillfeed(W);
     this.drawAnnouncements(W, H);
+    this.drawViewLabel(W);
+    if (g.dmgT > 0 && me && me.net.al) {
+      const a = wrapAngle(g.dmgDir - (v.kind === 'birdseye' ? Math.PI : g.pred.yaw));
+      ctx.strokeStyle = `rgba(255,40,30,${g.dmgT * 0.8})`; ctx.lineWidth = 12;
+      ctx.beginPath(); ctx.arc(W / 2, H / 2, Math.min(W, H) * 0.3, -Math.PI / 2 - a - 0.3, -Math.PI / 2 - a + 0.3); ctx.stroke();
+    }
+    if (g.incoming > 0 && Math.floor(g.realTime * 6) % 2 === 0) this.banner(W / 2, H * 0.3, '⚠ MISSILE LOCK — POP SMOKE (G) OR HIDE UNDER TREES!', '#ff5a3a', 18);
     if (g.state === 'countdown') this.drawCountdown(W, H);
-    if (g.state === 'paused') this.drawPause(W, H);
     if (g.state === 'over') this.drawGameOver(W, H);
-    if (g.cfg.debug || g.cfg.fps) this.label(8, H - 8, `${g.fps.toFixed(0)} fps · ${g.fx.parts.length} particles · ${g.projectiles.length} proj`, 12, '#fff', 'left', 'bottom');
-    if (!g.audioStarted && g.state === 'countdown') this.label(W / 2, H * 0.55, '🔊 press any key or click to enable sound', 13, 'rgba(255,255,255,0.85)', 'center');
+    if (g.flash > 0) { ctx.fillStyle = `rgba(255,250,235,${Math.min(1, g.flash * 1.2)})`; ctx.fillRect(0, 0, W, H); }
+    if (g.help) this.drawHelp(W, H);
+    else if (!g.audioStarted && g.state === 'countdown') this.label(W / 2, H * 0.55, '🔊 press any key or click to enable sound', 13, 'rgba(255,255,255,0.85)', 'center');
+    if (g.opts.debug) this.label(8, H - 150, `${g.fps.toFixed(0)} fps · ${g.fx.parts.length} particles · ${g.proj.size} proj · view ${v.kind}`, 12, '#fff', 'left', 'bottom');
   }
 
   // ---------- primitives ----------
   label(x, y, text, size, col, align = 'left', base = 'middle', font = FONT, stroke = 'rgba(0,0,0,0.75)') {
     const ctx = this.ctx;
     ctx.font = `bold ${size}px ${font}`;
-    ctx.textAlign = align;
-    ctx.textBaseline = base;
+    ctx.textAlign = align; ctx.textBaseline = base;
     if (stroke) { ctx.lineJoin = 'round'; ctx.lineWidth = Math.max(2, size / 5); ctx.strokeStyle = stroke; ctx.strokeText(text, x, y); }
-    ctx.fillStyle = col;
-    ctx.fillText(text, x, y);
+    ctx.fillStyle = col; ctx.fillText(text, x, y);
+  }
+
+  banner(x, y, text, col, size = 16) {
+    this.ctx.font = `bold ${size}px ${FONT}`;
+    const w = this.ctx.measureText(text).width + 30;
+    this.roundRect(x - w / 2, y - size, w, size * 2, size, 'rgba(10,12,25,0.7)', col);
+    this.label(x, y, text, size, col, 'center');
   }
 
   roundRect(x, y, w, h, r, fill, stroke) {
     const ctx = this.ctx;
+    r = Math.min(r, h / 2, w / 2);
     ctx.beginPath();
     ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath();
@@ -100,183 +100,158 @@ export class HUD {
     if (frac > 0) this.roundRect(x, y, Math.max(h, w * clamp(frac, 0, 1)), h, h / 2, col);
   }
 
-  // ---------- in-world labels ----------
+  // ---------- world labels ----------
   drawWorldLabels(v) {
     const g = this.g, ctx = this.ctx;
-    const birds = v.kind === 'birds' || v.kind === 'overview';
-    for (const t of g.tanks) {
-      if (!t.alive) continue;
-      if (v.tank === t && !birds) continue;
-      if (t.power.ghost > 0 && !(v.tank === t)) continue;
+    const birds = v.kind === 'birdseye' || v.kind === 'winner';
+    for (const t of g.tanks.values()) {
+      const n = t.net;
+      if (!n.al) continue;
+      if (t.id === g.you && v.kind === 'commander') continue;
+      if (n.pw.ghost && t.id !== g.you) continue;
       const p = this.project(v, t.x, t.y + 3.4 * t.scale, t.z);
-      if (!p || p.nx < -1.1 || p.nx > 1.1 || p.ny < -1.1 || p.ny > 1.1) continue;
-      const dist = p.w;
-      if (!birds && dist > 260) continue;
-      const k = birds ? 1 : clamp(60 / dist, 0.55, 1);
+      if (!p || Math.abs(p.nx) > 1.1 || Math.abs(p.ny) > 1.1) continue;
+      if (!birds && p.w > 280) continue;
+      const k = birds ? 1 : clamp(60 / p.w, 0.55, 1);
       const w = 46 * k;
-      if (!birds) {
-        // enemy marker for the gunner
-        ctx.save();
-        ctx.translate(p.x, p.y);
-        ctx.rotate(Math.PI / 4);
-        ctx.strokeStyle = t.css; ctx.lineWidth = 2;
-        ctx.strokeRect(-6 * k, -6 * k, 12 * k, 12 * k);
-        ctx.restore();
-        this.label(p.x, p.y - 16 * k, `${t.name.replace(' (bot)', '')} ${Math.round(dist)}m`, 11 * k + 2, t.css, 'center');
-        this.bar(p.x - w / 2, p.y - 30 * k, w, 5, t.hp / t.maxHp, hpCol(t.hp / t.maxHp));
+      const name = n.name.replace(' (bot)', '') + (t.id === g.you ? ' (you)' : '');
+      if (v.kind === 'commander' || v.kind === 'chase') {
+        if (t.id !== g.you) {
+          ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(Math.PI / 4);
+          ctx.strokeStyle = t.css; ctx.lineWidth = 2; ctx.strokeRect(-6 * k, -6 * k, 12 * k, 12 * k);
+          ctx.restore();
+          this.label(p.x, p.y - 16 * k, `${name} ${Math.round(p.w)}m`, 11 * k + 2, t.css, 'center');
+        }
+        this.bar(p.x - w / 2, p.y - 30 * k, w, 5, n.hp / n.mhp, hpCol(n.hp / n.mhp));
       } else {
-        this.label(p.x, p.y - 12, t.name.replace(' (bot)', ''), 12, t.css, 'center');
-        this.bar(p.x - w / 2, p.y - 4, w, 6, t.hp / t.maxHp, hpCol(t.hp / t.maxHp));
-        if (t.shieldHp > 0) this.bar(p.x - w / 2, p.y + 4, w * (t.shieldHp / POWERUPS.shield.absorb), 3, 1, '#8899ff');
-        if (t.human && t.mouseAim && t.mouseTarget && t.slot === 0) {
-          const q = this.project(v, t.mouseTarget[0], t.mouseTarget[1], t.mouseTarget[2]);
-          if (q) this.crosshair(q.x, q.y, t.css);
+        this.label(p.x, p.y - 14, name, 12, t.css, 'center');
+        this.bar(p.x - w / 2, p.y - 5, w, 6, n.hp / n.mhp, hpCol(n.hp / n.mhp));
+        if (n.sh > 0) this.bar(p.x - w / 2, p.y + 3, w * (n.sh / POWERUPS.shield.absorb), 3, 1, '#8899ff');
+      }
+      if (g.lock.cand === t.id) {
+        const prog = clamp(g.lock.t / WEAPONS.seeker.lockTime, 0, 1);
+        const s = 34 - prog * 14;
+        const locked = g.lock.id === t.id;
+        ctx.strokeStyle = locked ? '#ff3b30' : '#ffd84d'; ctx.lineWidth = 3;
+        const q = this.project(v, t.x, t.y + 1.2, t.z);
+        if (q) {
+          ctx.strokeRect(q.x - s, q.y - s, s * 2, s * 2);
+          this.label(q.x, q.y + s + 12, locked ? 'LOCKED' : 'LOCKING…', 13, locked ? '#ff3b30' : '#ffd84d', 'center');
         }
       }
     }
-    // pop text (comic book style)
+    if (birds) for (const p of g.pickups) {
+      if (!p.active) continue;
+      const q = this.project(v, p.x, p.y + 4.2, p.z);
+      if (!q || Math.abs(q.nx) > 1 || Math.abs(q.ny) > 1) continue;
+      const icon = p.kind === 'health' ? '❤️' : p.kind === 'ammo' ? '🧨' : p.kind === 'weapon' ? (p.sub === 'massive' ? '☢️' : '🎁') : { speed: '⚡', shield: '🛡️', damage: '💪', rapid: '⏩', ghost: '👻' }[p.sub];
+      ctx.font = '16px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(icon, q.x, q.y + Math.sin(p.spin * 2.2) * 3);
+    }
     for (const tx of g.fx.texts) {
       const p = this.project(v, tx.x, tx.y, tx.z);
-      if (!p || p.w > 300) continue;
+      if (!p || p.w > 400) continue;
       const a = tx.age / tx.life;
       const pop = a < 0.15 ? 0.4 + (a / 0.15) * 0.9 : a < 0.25 ? 1.3 - ((a - 0.15) / 0.1) * 0.3 : 1;
       const base = tx.small ? 16 : 34;
-      const size = base * tx.scale * pop * (birds ? 1 : clamp(50 / p.w, 0.5, 1.6));
+      const size = base * tx.scale * pop * (birds ? clamp(120 / (v.camH || 120), 0.6, 1.3) : clamp(50 / p.w, 0.5, 1.6));
       ctx.save();
       ctx.globalAlpha = a > 0.7 ? 1 - (a - 0.7) / 0.3 : 1;
-      ctx.translate(p.x, p.y);
-      ctx.rotate(tx.rot);
-      ctx.font = `${size}px ${COMIC}`;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.lineJoin = 'round';
+      ctx.translate(p.x, p.y); ctx.rotate(tx.rot);
+      ctx.font = `${size}px ${COMIC}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
       if (!tx.small) { ctx.lineWidth = size / 3.5; ctx.strokeStyle = '#2a1033'; ctx.strokeText(tx.text, 0, 0); }
       ctx.lineWidth = size / 8; ctx.strokeStyle = tx.small ? '#000' : '#fff'; ctx.strokeText(tx.text, 0, 0);
       ctx.fillStyle = tx.col; ctx.fillText(tx.text, 0, 0);
       ctx.restore();
     }
-    // pickup icons from above
-    if (birds && v.kind !== 'overview') for (const p of g.pickups) {
-      if (!p.active) continue;
-      const q = this.project(v, p.x, p.y + 4.2, p.z);
-      if (!q || Math.abs(q.nx) > 1 || Math.abs(q.ny) > 1) continue;
-      const icon = p.kind === 'health' ? '❤️' : p.kind === 'ammo' ? '🧨' : p.kind === 'weapon' ? '🔫' : { speed: '⚡', shield: '🛡️', damage: '💪', rapid: '🔥', ghost: '👻' }[p.sub];
-      ctx.font = '16px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(icon, q.x, q.y + Math.sin(p.spin * 2.2) * 3);
-    }
-    // airdrop markers
     for (const d of g.drops) {
       const p = this.project(v, d.x, d.y + 9, d.z);
-      if (p && p.nx > -1 && p.nx < 1 && p.ny > -1 && p.ny < 1) this.label(p.x, p.y, '📦 SUPPLY DROP', 12, '#ffd84d', 'center');
+      if (p && Math.abs(p.nx) < 1 && Math.abs(p.ny) < 1) this.label(p.x, p.y, '📦 SUPPLY DROP', 12, '#ffd84d', 'center');
     }
   }
 
-  crosshair(x, y, col) {
+  // ---------- reticles ----------
+  crosshair(x, y, col, r = 9) {
     const ctx = this.ctx;
     ctx.strokeStyle = col; ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.arc(x, y, 9, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(x - 15, y); ctx.lineTo(x - 5, y); ctx.moveTo(x + 5, y); ctx.lineTo(x + 15, y); ctx.moveTo(x, y - 15); ctx.lineTo(x, y - 5); ctx.moveTo(x, y + 5); ctx.lineTo(x, y + 15); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x - r - 6, y); ctx.lineTo(x - r + 4, y); ctx.moveTo(x + r - 4, y); ctx.lineTo(x + r + 6, y); ctx.moveTo(x, y - r - 6); ctx.lineTo(x, y - r + 4); ctx.moveTo(x, y + r - 4); ctx.lineTo(x, y + r + 6); ctx.stroke();
   }
 
-  drawOffscreen(v) {
+  drawChaseReticle(v, me) {
+    const g = this.g;
+    const W = WEAPONS[g.weapon || 'standard'];
+    let pt = g.aimEnd;
+    if (!pt) { const d = 80; pt = [me.muzzle[0] + me.dir[0] * d, me.muzzle[1] + me.dir[1] * d, me.muzzle[2] + me.dir[2] * d]; }
+    const q = this.project(v, pt[0], pt[1], pt[2]);
+    if (q) this.crosshair(q.x, q.y, me.css, W.kind === 'bullet' ? 9 + me.net.bloom * 120 : 9);
+    this.reload(v.w / 2, v.h - 120, me, W);
+    if (W.kind === 'seeker') this.label(v.w / 2, v.h - 150, 'Seeker lock-on needs COMMANDER view (C)', 12, '#ffe08a', 'center');
+    if (W.kind === 'strike' || W.kind === 'seeker') this.label(v.w / 2, v.h - 92, `RANGE ${Math.round(g.aim.range)}m  (↑↓)`, 13, '#bfffd0', 'center');
+  }
+
+  drawBirdsReticle(v, me) {
+    const g = this.g;
+    const W = WEAPONS[g.weapon || 'standard'];
+    if (g.aim.mouse && g.mouseTarget) { const q = this.project(v, ...g.mouseTarget); if (q) this.crosshair(q.x, q.y, me.css); }
+    const p = this.project(v, me.x, me.y, me.z);
+    if (p) this.reload(p.x, p.y + 30, me, W, 18);
+    if (W.kind === 'strike' || W.kind === 'seeker') this.label(v.w / 2, v.h - 160, `RANGE ${Math.round(g.aim.range)}m  (↑↓ or mouse)`, 13, '#bfffd0', 'center');
+  }
+
+  reload(x, y, me, W, r = 14) {
+    const ctx = this.ctx, e = me.net;
+    const frac = W.kind === 'strike' && e.scd > 0 ? 1 - e.scd / W.cooldown : clamp(1 - e.cd / Math.max(0.05, W.reload * (W.id === 'standard' ? me.def.gun.reload : 1)), 0, 1);
+    if (frac >= 1) return;
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,200,80,0.95)'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(x, y, r, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2); ctx.stroke();
+  }
+
+  drawScope(v, me) {
     const g = this.g, ctx = this.ctx;
-    for (const t of g.humans) {
-      if (!t.alive) continue;
-      const p = this.project(v, t.x, t.y + 1, t.z);
-      if (p && Math.abs(p.nx) < 0.95 && Math.abs(p.ny) < 0.95) continue;
-      const cx = v.x + v.w / 2, cy = v.y + v.h / 2;
-      let dx = p ? p.x - cx : 0, dy = p ? p.y - cy : -1;
-      const a = Math.atan2(dy, dx);
-      const rx = v.w / 2 - 30, ry = v.h / 2 - 30;
-      const s = Math.min(Math.abs(rx / Math.cos(a)), Math.abs(ry / Math.sin(a)));
-      const x = cx + Math.cos(a) * s, y = cy + Math.sin(a) * s;
-      ctx.save(); ctx.translate(x, y); ctx.rotate(a);
-      ctx.fillStyle = t.css; ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(16, 0); ctx.lineTo(-8, -11); ctx.lineTo(-8, 11); ctx.closePath(); ctx.fill(); ctx.stroke();
-      ctx.restore();
-      this.label(x, y + 20, t.name, 12, t.css, 'center');
-    }
-  }
-
-  // ---------- gunner scope ----------
-  drawScope(v) {
-    const g = this.g, ctx = this.ctx, t = v.tank;
-    if (!t.alive) return;
     const cx = v.x + v.w / 2, cy = v.y + v.h / 2;
     const R = Math.min(v.w, v.h) * 0.45;
-    const W = WEAPONS[t.weapons[t.wi].id];
-    // vignette mask
+    const W = WEAPONS[g.weapon || 'standard'];
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(v.x, v.y, v.w, v.h);
-    ctx.arc(cx, cy, R, 0, Math.PI * 2, true);
-    ctx.fillStyle = 'rgba(14,18,24,0.88)';
-    ctx.fill('evenodd');
+    ctx.beginPath(); ctx.rect(v.x, v.y, v.w, v.h); ctx.arc(cx, cy, R, 0, Math.PI * 2, true);
+    ctx.fillStyle = 'rgba(14,18,24,0.88)'; ctx.fill('evenodd');
     const grad = ctx.createRadialGradient(cx, cy, R * 0.7, cx, cy, R * 1.05);
     grad.addColorStop(0, 'rgba(0,0,0,0)'); grad.addColorStop(1, 'rgba(0,0,0,0.45)');
-    ctx.fillStyle = grad;
-    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = t.css; ctx.lineWidth = 4;
-    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = me.css; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
     ctx.restore();
-    // reticle
     const col = 'rgba(255,255,255,0.92)';
-    const kick = t.camKick * 30;
-    const ry = cy;
     ctx.strokeStyle = col; ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(cx - R * 0.95, ry); ctx.lineTo(cx - 26, ry);
-    ctx.moveTo(cx + 26, ry); ctx.lineTo(cx + R * 0.95, ry);
-    ctx.moveTo(cx, ry + 26); ctx.lineTo(cx, ry + R * 0.7);
-    ctx.stroke();
-    // chevron
-    ctx.strokeStyle = t.css; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(cx - 14, ry + 14 + kick * 0.2); ctx.lineTo(cx, ry); ctx.lineTo(cx + 14, ry + 14 + kick * 0.2); ctx.stroke();
-    // stadia ticks
+    ctx.beginPath(); ctx.moveTo(cx - R * 0.95, cy); ctx.lineTo(cx - 26, cy); ctx.moveTo(cx + 26, cy); ctx.lineTo(cx + R * 0.95, cy); ctx.moveTo(cx, cy + 26); ctx.lineTo(cx, cy + R * 0.7); ctx.stroke();
+    ctx.strokeStyle = me.css; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(cx - 14, cy + 14); ctx.lineTo(cx, cy); ctx.lineTo(cx + 14, cy + 14); ctx.stroke();
     ctx.strokeStyle = col; ctx.lineWidth = 1.5;
-    for (let i = 1; i <= 6; i++) {
-      const d = i * R * 0.13;
-      ctx.beginPath(); ctx.moveTo(cx - d, ry - 6); ctx.lineTo(cx - d, ry + 6); ctx.moveTo(cx + d, ry - 6); ctx.lineTo(cx + d, ry + 6); ctx.stroke();
-    }
-    for (let i = 1; i <= 4; i++) {
-      const d = i * R * 0.14;
-      ctx.beginPath(); ctx.moveTo(cx - 8 + i, ry + d); ctx.lineTo(cx + 8 - i, ry + d); ctx.stroke();
-    }
-    // aim marker: where the turret is slewing to (mouse-look / fast traverse)
-    const dYaw = wrapAngle(t.aimYaw - t.turretYaw);
-    if (Math.abs(dYaw) > 0.03 || Math.abs(t.aimPitch - t.pitch) > 0.02) {
-      const sxp = t.muzzle[0] + Math.sin(t.aimYaw) * 80, syp = t.muzzle[1] + Math.tan(t.aimPitch) * 80, szp = t.muzzle[2] + Math.cos(t.aimYaw) * 80;
+    for (let i = 1; i <= 6; i++) { const d = i * R * 0.13; ctx.beginPath(); ctx.moveTo(cx - d, cy - 6); ctx.lineTo(cx - d, cy + 6); ctx.moveTo(cx + d, cy - 6); ctx.lineTo(cx + d, cy + 6); ctx.stroke(); }
+    for (let i = 1; i <= 4; i++) { const d = i * R * 0.14; ctx.beginPath(); ctx.moveTo(cx - 8 + i, cy + d); ctx.lineTo(cx + 8 - i, cy + d); ctx.stroke(); }
+    if (W.kind === 'seeker') { ctx.strokeStyle = 'rgba(255,216,77,0.6)'; ctx.setLineDash([6, 6]); ctx.beginPath(); ctx.arc(cx, cy, v.h * 0.06 * 2, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]); }
+    if (W.kind === 'bullet') { ctx.strokeStyle = 'rgba(255,230,120,0.7)'; ctx.beginPath(); ctx.arc(cx, cy, 10 + me.net.bloom * 600, 0, Math.PI * 2); ctx.stroke(); }
+    const dYaw = wrapAngle(g.aim.yaw - g.pred.yaw);
+    if (Math.abs(dYaw) > 0.03) {
+      const sxp = me.muzzle[0] + Math.sin(g.aim.yaw) * 80, syp = me.muzzle[1] + Math.tan(g.aim.pitch) * 80, szp = me.muzzle[2] + Math.cos(g.aim.yaw) * 80;
       const q = this.project(v, sxp, syp, szp);
       ctx.strokeStyle = 'rgba(255,230,120,0.9)'; ctx.lineWidth = 2;
       if (q && Math.abs(q.nx) < 1 && Math.abs(q.ny) < 1) { ctx.beginPath(); ctx.arc(q.x, q.y, 7, 0, Math.PI * 2); ctx.stroke(); }
-      else { const a = -Math.sign(dYaw); ctx.beginPath(); ctx.moveTo(cx + a * (R - 14), ry - 10); ctx.lineTo(cx + a * (R - 2), ry); ctx.lineTo(cx + a * (R - 14), ry + 10); ctx.stroke(); }
+      else { const a = -Math.sign(dYaw); ctx.beginPath(); ctx.moveTo(cx + a * (R - 14), cy - 10); ctx.lineTo(cx + a * (R - 2), cy); ctx.lineTo(cx + a * (R - 14), cy + 10); ctx.stroke(); }
     }
-    // reload arc
-    const rel = clamp(1 - t.cooldown / (W.reload * (t.power.rapid > 0 ? 0.5 : 1)), 0, 1);
-    ctx.strokeStyle = rel >= 1 ? 'rgba(120,255,140,0.9)' : 'rgba(255,200,80,0.9)'; ctx.lineWidth = 4;
-    ctx.beginPath(); ctx.arc(cx, ry, 38, -Math.PI / 2, -Math.PI / 2 + rel * Math.PI * 2); ctx.stroke();
-    // hit marker
-    if (t.hitMarkT > 0) {
-      ctx.strokeStyle = `rgba(255,80,60,${t.hitMarkT * 4})`; ctx.lineWidth = 3;
-      ctx.beginPath(); for (const [a, b] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) { ctx.moveTo(cx + a * 10, ry + b * 10); ctx.lineTo(cx + a * 22, ry + b * 22); } ctx.stroke();
+    this.reload(cx, cy, me, W, 38);
+    if (g.hitMarkT > 0) {
+      ctx.strokeStyle = `rgba(255,80,60,${g.hitMarkT * 4})`; ctx.lineWidth = 3;
+      ctx.beginPath(); for (const [a, b] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) { ctx.moveTo(cx + a * 10, cy + b * 10); ctx.lineTo(cx + a * 22, cy + b * 22); } ctx.stroke();
     }
-    // range readout
-    let range = null;
-    if (W.kind === 'lob' && v.impact) range = Math.hypot(v.impact[0] - t.x, v.impact[2] - t.z);
-    else {
-      for (let s = 2; s < 400 && range === null; s += 1.5) {
-        const x = t.muzzle[0] + t.dir[0] * s, y = t.muzzle[1] + t.dir[1] * s, z = t.muzzle[2] + t.dir[2] * s;
-        if (y < g.world.heightAt(x, z)) { range = s; break; }
-        g.world.query(x, z, 0.3, (o) => { if (y < o.top) { range = s; return false; } });
-        for (const e of g.tanks) if (e !== t && e.alive && Math.hypot(e.x - x, e.z - z) < e.radius && y < e.y + 2.6) range = s;
-        for (const p of g.pickups) if (p.active && Math.hypot(p.x - x, p.z - z) < 1.2 && y < p.y + 2.6) range = s;
-      }
-    }
-    this.label(cx + 50, ry + 22, range ? `RNG ${Math.round(range)}m` : 'RNG ---', 13, '#bfffd0', 'left');
-    this.label(cx + 50, ry + 40, `ELV ${(t.pitch * 57.3).toFixed(1)}°`, 12, '#bfffd0', 'left');
-    if (t.zoom) this.label(cx + 50, ry - 22, `ZOOM ${t.def.zoom}x`, 13, '#ffe08a', 'left');
-    // compass tape
-    const heading = ((-t.turretYaw * 180) / Math.PI + 180 + 3600) % 360;
-    const tapeW = Math.min(v.w * 0.5, 360), tx = cx - tapeW / 2, ty = v.y + (v.y < 60 ? 76 : 22);
+    const lobbed = W.kind === 'seeker' || W.kind === 'strike';
+    const range = lobbed ? (g.lock.id >= 0 ? g.lockDist : g.aim.range) : g.rangeAlongGun(me);
+    this.label(cx + 50, cy + 22, range ? `RNG ${Math.round(range)}m` : 'RNG ---', 13, '#bfffd0', 'left');
+    this.label(cx + 50, cy + 40, lobbed ? 'RANGE ↑↓' : `ELV ${(me.p * 57.3).toFixed(1)}°`, 12, '#bfffd0', 'left');
+    if (g.zoomed) this.label(cx + 50, cy - 22, `ZOOM ${me.def.zoom}x`, 13, '#ffe08a', 'left');
+    if (W.kind === 'seeker' && g.lock.cand < 0) this.label(cx, cy + R * 0.78, 'hold a tank inside the circle to lock on', 12, '#ffe08a', 'center');
+    const heading = ((-me.ty * 180) / Math.PI + 180 + 3600) % 360;
+    const tapeW = Math.min(v.w * 0.5, 360), tx = cx - tapeW / 2, ty = 76;
     this.roundRect(tx, ty - 12, tapeW, 26, 6, 'rgba(0,0,0,0.5)');
     ctx.save(); ctx.beginPath(); ctx.rect(tx, ty - 14, tapeW, 30); ctx.clip();
     for (let d = -60; d <= 60; d += 5) {
@@ -288,78 +263,84 @@ export class HUD {
       if (deg % 45 === 0) this.label(x, ty - 2, { 0: 'N', 45: 'NE', 90: 'E', 135: 'SE', 180: 'S', 225: 'SW', 270: 'W', 315: 'NW' }[deg], 11, '#ffe08a', 'center', 'middle', FONT, null);
     }
     ctx.restore();
-    ctx.fillStyle = t.css; ctx.beginPath(); ctx.moveTo(cx, ty + 14); ctx.lineTo(cx - 6, ty + 22); ctx.lineTo(cx + 6, ty + 22); ctx.fill();
-    // hull vs turret indicator
+    ctx.fillStyle = me.css; ctx.beginPath(); ctx.moveTo(cx, ty + 14); ctx.lineTo(cx - 6, ty + 22); ctx.lineTo(cx + 6, ty + 22); ctx.fill();
     const ix = cx, iy = v.y + v.h - 46;
-    ctx.save(); ctx.translate(ix, iy);
-    ctx.rotate(-(t.yaw - t.turretYaw));
-    this.roundRect(-11, -16, 22, 32, 4, 'rgba(0,0,0,0.4)', t.css);
-    ctx.fillStyle = t.css; ctx.fillRect(-11, -18, 22, 4);
+    ctx.save(); ctx.translate(ix, iy); ctx.rotate(-(me.yaw - me.ty));
+    this.roundRect(-11, -16, 22, 32, 4, 'rgba(0,0,0,0.4)', me.css);
+    ctx.fillStyle = me.css; ctx.fillRect(-11, -18, 22, 4);
     ctx.restore();
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(ix, iy); ctx.lineTo(ix, iy - 26); ctx.stroke();
     ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ix, iy, 6, 0, Math.PI * 2); ctx.fill();
     this.label(ix, iy + 28, 'HULL', 9, 'rgba(255,255,255,0.7)', 'center');
-    // damage direction
-    if (t.dmgT > 0 && t.dmgDir !== null) {
-      const a = wrapAngle(t.dmgDir - t.turretYaw);
-      ctx.strokeStyle = `rgba(255,40,30,${t.dmgT * 0.8})`; ctx.lineWidth = 10;
-      ctx.beginPath(); ctx.arc(cx, ry, R * 0.55, -Math.PI / 2 - a - 0.3, -Math.PI / 2 - a + 0.3); ctx.stroke();
-    }
   }
 
-  drawDeadNotice(v) {
-    const t = v.tank, cx = v.x + v.w / 2, cy = v.y + v.h * 0.35;
-    if (t.eliminated) { this.label(cx, cy, 'ELIMINATED', 40, '#ff5a5a', 'center', 'middle', COMIC); return; }
-    this.label(cx, cy, 'DESTROYED!', 44, '#ff7a3a', 'center', 'middle', COMIC);
-    this.label(cx, cy + 40, `respawning in ${Math.max(0, t.respawnT).toFixed(1)}s`, 16, '#fff', 'center');
+  drawDeadNotice(me, W, H) {
+    if (me.net.el) { this.label(W / 2, H * 0.35, 'ELIMINATED', 40, '#ff5a5a', 'center', 'middle', COMIC); return; }
+    this.label(W / 2, H * 0.35, 'DESTROYED!', 44, '#ff7a3a', 'center', 'middle', COMIC);
+    this.label(W / 2, H * 0.35 + 40, `respawning in ${me.net.rt.toFixed(1)}s`, 16, '#fff', 'center');
+  }
+
+  drawStrikeWarnings(v, me, W, H) {
+    const g = this.g;
+    for (const s of g.strikes) {
+      if (s.t <= 0) continue;
+      const q = this.project(v, s.x, g.world.heightAt(s.x, s.z) + 6, s.z);
+      if (q && Math.abs(q.nx) < 1.05 && Math.abs(q.ny) < 1.05) this.label(q.x, q.y, `✈ ${s.t.toFixed(1)}`, 22, '#ff4a3a', 'center', 'middle', COMIC, '#2a1033');
+      if (me && me.net.al && Math.hypot(me.x - s.x, me.z - s.z) < s.r + 6 && Math.floor(g.realTime * 5) % 2 === 0) this.banner(W / 2, H * 0.2, `GET OUT! AIR STRIKE IN ${s.t.toFixed(1)}s`, '#ff4a3a', 20);
+    }
   }
 
   // ---------- player panel ----------
-  drawPanel(t, x, y, corner, v) {
-    const ctx = this.ctx;
-    if (v && v.h < 420 && !t.human && v.kind !== 'commander') {
-      // compact badge for spectator quadrants so tanks stay visible
-      const w = 170, px = x, py = y - 34;
-      this.roundRect(px, py, w, 30, 10, 'rgba(15,20,35,0.6)', t.css);
-      this.label(px + 10, py + 10, t.name.replace(' (bot)', '') + ' · ' + t.def.name, 11, t.css, 'left');
-      if (t.alive) this.bar(px + 10, py + 19, w - 20, 6, t.hp / t.maxHp, hpCol(t.hp / t.maxHp));
-      return;
-    }
-    const w = 230, h = 92 + Math.max(0, t.weapons.length - 2) * 0;
-    const px = corner[1] === 'l' ? x : x - w;
-    const py = corner[0] === 'b' ? y - h : y;
-    this.roundRect(px, py, w, h, 12, 'rgba(15,20,35,0.62)', t.css);
-    this.label(px + 12, py + 15, t.name.replace(' (bot)', '') + (t.human ? '' : ' 🤖'), 15, t.css, 'left');
-    this.label(px + w - 12, py + 15, `${t.def.name.toUpperCase()} · ${t.def.role}`, 11, '#dfe6ff', 'right');
-    if (t.alive) {
-      this.bar(px + 12, py + 28, w - 24, 12, t.hp / t.maxHp, hpCol(t.hp / t.maxHp));
-      this.label(px + w / 2, py + 34, `${Math.ceil(t.hp)} / ${t.maxHp}`, 10, '#fff', 'center');
-      if (t.shieldHp > 0) this.bar(px + 12, py + 42, (w - 24) * (t.shieldHp / POWERUPS.shield.absorb), 4, 1, '#8899ff');
-    } else {
-      this.label(px + w / 2, py + 34, t.eliminated ? 'ELIMINATED' : `RESPAWN ${Math.max(0, t.respawnT).toFixed(1)}s`, 13, '#ff8a6a', 'center');
-    }
-    // weapons
-    let wx = px + 12;
-    t.weapons.forEach((wp, i) => {
-      const W = WEAPONS[wp.id];
-      const sel = i === t.wi;
-      const bw = Math.min(68, (w - 24) / t.weapons.length - 4);
-      this.roundRect(wx, py + 50, bw, 34, 7, sel ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.35)', sel ? '#fff' : null);
-      this.label(wx + bw / 2, py + 60, W.name.length > 9 ? W.name.split(' ')[0] : W.name, 10, sel ? '#fff' : '#aab', 'center');
-      const reload = sel ? clamp(1 - t.cooldown / W.reload, 0, 1) : 1;
-      this.label(wx + bw / 2, py + 75, `${wp.ammo}`, 13, wp.ammo > 0 ? (reload < 1 ? '#ffcf6a' : '#fff') : '#ff6a6a', 'center');
-      wx += bw + 4;
+  drawPanel(me, x, y) {
+    const g = this.g, e = me.net;
+    const w = 330, h = 128;
+    const px = x, py = y - h;
+    this.roundRect(px, py, w, h, 12, 'rgba(15,20,35,0.66)', me.css);
+    this.label(px + 12, py + 15, e.name, 15, me.css, 'left');
+    this.label(px + w - 12, py + 15, `${me.def.name.toUpperCase()} · ${me.def.role}`, 11, '#dfe6ff', 'right');
+    if (e.al) {
+      this.bar(px + 12, py + 28, w - 24, 12, e.hp / e.mhp, hpCol(e.hp / e.mhp));
+      this.label(px + w / 2, py + 34, `${e.hp} / ${e.mhp}`, 10, '#fff', 'center');
+      if (e.sh > 0) this.bar(px + 12, py + 42, (w - 24) * (e.sh / POWERUPS.shield.absorb), 4, 1, '#8899ff');
+    } else this.label(px + w / 2, py + 34, e.el ? 'ELIMINATED' : `RESPAWN ${e.rt.toFixed(1)}s`, 13, '#ff8a6a', 'center');
+    const owned = new Map(e.w.map(([id, a]) => [id, a]));
+    const bw = (w - 24 - 7 * 3) / 8;
+    WEAPON_ORDER.forEach((id, i) => {
+      const W = WEAPONS[id];
+      const bx = px + 12 + i * (bw + 3), by = py + 50;
+      const has = owned.has(id), sel = g.weapon === id;
+      this.roundRect(bx, by, bw, 40, 6, sel ? 'rgba(255,255,255,0.25)' : has ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.15)', sel ? '#fff' : null);
+      this.label(bx + 4, by + 8, String(i + 1), 9, has ? '#9ab' : '#556', 'left');
+      this.label(bx + bw / 2, by + 17, W.short, 9, has ? (sel ? '#fff' : '#cde') : '#556', 'center');
+      if (has) {
+        let txt = String(owned.get(id)), col = owned.get(id) > 0 ? '#fff' : '#ff6a6a';
+        if (id === 'strike' && e.scd > 0) { txt = `${Math.ceil(e.scd)}s`; col = '#ffb070'; }
+        this.label(bx + bw / 2, by + 31, txt, 12, col, 'center');
+      }
     });
-    // powerups
-    let ix = px + 4;
-    for (const k in t.power) {
-      if (t.power[k] <= 0) continue;
-      const P = POWERUPS[k];
-      const by = corner[0] === 'b' ? py - 26 : py + h + 4;
-      this.roundRect(ix, by, 80, 22, 11, 'rgba(0,0,0,0.55)', P.css);
-      this.label(ix + 40, by + 11, `${P.name.split(' ')[0]} ${Math.ceil(t.power[k])}s`, 11, P.css, 'center');
-      ix += 84;
+    const ry = py + 106;
+    this.label(px + 12, ry, `SMOKE ×${e.sm} (G)`, 11, '#dde', 'left');
+    this.label(px + w - 12, ry, `${WEAPONS[g.weapon || 'standard'].name}  ·  Q/E`, 11, '#ffe08a', 'right');
+    if (g.weapon === 'flame' || e.heat > 0.1) {
+      const f = e.heat / 4;
+      this.label(px + 112, ry, 'HEAT', 10, f > 0.6 ? '#ff6a3a' : '#ffd0a0', 'left');
+      this.bar(px + 144, ry - 5, 60, 10, f, f > 0.6 ? '#ff4a2a' : '#ffa040');
+      if (f > 0.6 && Math.floor(g.realTime * 6) % 2) this.label(px + 145, ry - 16, 'FIRE RISK!', 10, '#ff5a3a', 'left');
     }
+    let ix = px + w + 8;
+    for (const k in e.pw) {
+      const P = POWERUPS[k];
+      this.roundRect(ix, py + h - 24, 92, 22, 11, 'rgba(0,0,0,0.55)', P.css);
+      this.label(ix + 46, py + h - 13, `${P.name.split(' ')[0]} ${Math.ceil(e.pw[k])}s`, 11, P.css, 'center');
+      ix += 96;
+    }
+  }
+
+  drawViewLabel() {
+    const g = this.g;
+    const any = g.cfg.mode === 'any';
+    this.label(14, 22, `VIEW: ${VIEW_NAMES[g.view] || g.view}${any ? '  ·  C to switch' : ''}  ·  Esc help`, 12, g.viewFlash > 0 ? '#ffdd33' : 'rgba(255,255,255,0.75)', 'left');
+    if (g.viewFlash > 0) this.label(this.W / 2, this.H * 0.16, VIEW_NAMES[g.view], 34, '#ffdd33', 'center', 'middle', COMIC, '#2a1033');
   }
 
   // ---------- minimap ----------
@@ -388,10 +369,11 @@ export class HUD {
     ctx.save();
     this.roundRect(x - 3, y - 3, size + 6, size + 6, 10, 'rgba(10,15,25,0.7)');
     ctx.beginPath(); ctx.rect(x, y, size, size); ctx.clip();
-    ctx.globalAlpha = 0.9;
-    ctx.drawImage(this.miniCache, x, y, size, size);
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = 0.9; ctx.drawImage(this.miniCache, x, y, size, size); ctx.globalAlpha = 1;
     const map = (wx, wz) => [x + ((wx + Wd.half) / Wd.size) * size, y + ((wz + Wd.half) / Wd.size) * size];
+    const sc = size / Wd.size;
+    for (const s of g.smokes) { const [mx, my] = map(s.x, s.z); ctx.fillStyle = 'rgba(230,230,230,0.6)'; ctx.beginPath(); ctx.arc(mx, my, s.r * sc, 0, 7); ctx.fill(); }
+    for (const s of g.strikes) if (s.t > -0.5) { const [mx, my] = map(s.x, s.z); ctx.strokeStyle = '#ff3b30'; ctx.lineWidth = 2; ctx.fillStyle = 'rgba(255,60,40,0.25)'; ctx.beginPath(); ctx.arc(mx, my, s.r * sc, 0, 7); ctx.fill(); ctx.stroke(); }
     for (const p of g.pickups) {
       if (!p.active) continue;
       const [mx, my] = map(p.x, p.z);
@@ -399,38 +381,36 @@ export class HUD {
       ctx.fillRect(mx - 2, my - 2, 4, 4);
     }
     for (const d of g.drops) { const [mx, my] = map(d.x, d.z); ctx.strokeStyle = '#ffd84d'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(mx, my, 5 + Math.sin(g.time * 6) * 2, 0, 7); ctx.stroke(); }
-    for (const t of g.tanks) {
-      if (!t.alive) continue;
-      if (t.power.ghost > 0 && t !== me) continue;
+    for (const t of g.tanks.values()) {
+      if (!t.net.al || (t.net.pw.ghost && t !== me)) continue;
       const [mx, my] = map(t.x, t.z);
       ctx.save(); ctx.translate(mx, my); ctx.rotate(-t.yaw + Math.PI);
       ctx.fillStyle = t.css; ctx.strokeStyle = t === me ? '#fff' : '#000'; ctx.lineWidth = t === me ? 2 : 1;
       ctx.beginPath(); ctx.moveTo(0, -6); ctx.lineTo(4.5, 5); ctx.lineTo(-4.5, 5); ctx.closePath(); ctx.fill(); ctx.stroke();
       ctx.restore();
     }
-    // view frustum for birds-eye camera
     ctx.restore();
     this.roundRect(x - 3, y - 3, size + 6, size + 6, 10, null, 'rgba(255,255,255,0.5)');
   }
 
-  // ---------- global UI ----------
+  // ---------- global ----------
   drawScoreboard(W) {
-    const g = this.g, ctx = this.ctx;
-    const n = g.tanks.length;
-    const pw = 92, gap = 8, tw = n * (pw + gap) + 90;
+    const g = this.g;
+    const list = [...g.tanks.values()];
+    const pw = 104, gap = 8, tw = list.length * (pw + gap) + 90;
     const x0 = W / 2 - tw / 2;
     this.roundRect(x0, 8, tw, 44, 14, 'rgba(15,20,35,0.6)');
-    g.tanks.forEach((t, i) => {
+    list.forEach((t, i) => {
       const x = x0 + 10 + i * (pw + gap);
-      this.roundRect(x, 14, pw, 32, 10, t.alive ? t.css : 'rgba(80,80,80,0.8)');
-      this.label(x + 8, 30, t.name.replace(' (bot)', '').slice(0, 7), 12, '#fff', 'left', 'middle', FONT, 'rgba(0,0,0,0.6)');
-      const s = g.cfg.lives > 0 ? `${t.score}·♥${Math.max(0, t.lives)}` : `${t.score}`;
-      this.label(x + pw - 8, 30, s, 17, '#fff', 'right', 'middle', FONT, 'rgba(0,0,0,0.6)');
+      this.roundRect(x, 14, pw, 32, 10, t.net.al ? t.css : 'rgba(80,80,80,0.8)', t.id === g.you ? '#fff' : null);
+      this.label(x + 8, 30, (t.net.h ? '' : '🤖') + t.net.name.replace(' (bot)', '').slice(0, 8), 12, '#fff', 'left', 'middle', FONT, 'rgba(0,0,0,0.6)');
+      this.label(x + pw - 8, 30, g.cfg.lives > 0 ? `${t.net.s}·♥${Math.max(0, t.net.l)}` : `${t.net.s}`, 17, '#fff', 'right', 'middle', FONT, 'rgba(0,0,0,0.6)');
     });
+    const s = g.snap;
+    if (!s) return;
     const tx = x0 + tw - 44;
-    let tt = g.cfg.timeLimit > 0 ? Math.max(0, g.cfg.timeLimit - g.matchTime) : g.matchTime;
-    const mm = Math.floor(tt / 60), ss = Math.floor(tt % 60);
-    this.label(tx, 24, `${mm}:${ss.toString().padStart(2, '0')}`, 16, tt < 30 && g.cfg.timeLimit > 0 ? '#ff7070' : '#fff', 'center');
+    const tt = g.cfg.timeLimit > 0 ? Math.max(0, g.cfg.timeLimit - s.mt) : s.mt;
+    this.label(tx, 24, `${Math.floor(tt / 60)}:${Math.floor(tt % 60).toString().padStart(2, '0')}`, 16, tt < 30 && g.cfg.timeLimit > 0 ? '#ff7070' : '#fff', 'center');
     this.label(tx, 41, g.cfg.lives > 0 ? 'LIVES' : `TO ${g.cfg.scoreLimit}`, 9, '#bcd', 'center');
   }
 
@@ -438,17 +418,16 @@ export class HUD {
     const g = this.g;
     g.killfeed.forEach((k, i) => {
       const y = 70 + i * 24;
-      const a = k.t > 5 ? 1 - (k.t - 5) : 1;
-      this.ctx.globalAlpha = a;
-      const icon = { shell: '💥', bullet: '🔫', rocket: '🚀', lob: '💣', mine: '✴️', rail: '⚡', flame: '🔥', burn: '🔥', ram: '🐏', barrel: '🛢️', chain: '💥', blast: '💥' }[k.w] || '💥';
-      const txt = k.self ? `${k.a} ${icon} ${k.b}` : null;
-      if (txt) this.label(W - 14, y, txt, 13, k.ac, 'right');
+      this.ctx.globalAlpha = k.t > 5 ? 1 - (k.t - 5) : 1;
+      const icon = KILL_ICONS[k.w] || '💥';
+      const a = k.a.replace(' (bot)', ''), b = k.b.replace(' (bot)', '');
+      if (k.self) this.label(W - 14, y, `${a} ${icon} ${b}`, 13, k.ac, 'right');
       else {
         this.ctx.font = `bold 13px ${FONT}`;
-        const bw = this.ctx.measureText(k.b).width;
-        this.label(W - 14, y, k.b, 13, k.bc, 'right');
+        const bw = this.ctx.measureText(b).width;
+        this.label(W - 14, y, b, 13, k.bc, 'right');
         this.label(W - 20 - bw, y, icon, 13, '#fff', 'right');
-        this.label(W - 44 - bw, y, k.a, 13, k.ac, 'right');
+        this.label(W - 44 - bw, y, a, 13, k.ac, 'right');
       }
       this.ctx.globalAlpha = 1;
     });
@@ -461,7 +440,7 @@ export class HUD {
       const pop = t < 0.2 ? 0.5 + t * 3 : 1.1 - Math.min(0.1, (t - 0.2) * 0.5);
       ctx.save();
       ctx.globalAlpha = t > 1.7 ? Math.max(0, 1 - (t - 1.7) * 2) : 1;
-      ctx.translate(W / 2, H * 0.22 + i * 56);
+      ctx.translate(W / 2, H * 0.26 + i * 56);
       ctx.scale(pop, pop);
       ctx.rotate(Math.sin(t * 6) * 0.03);
       const size = a.big ? 96 : 40;
@@ -475,148 +454,144 @@ export class HUD {
 
   drawCountdown(W, H) {
     const g = this.g, ctx = this.ctx;
-    const c = Math.ceil(g.countdown - 0.5);
+    const cd = g.snap ? g.snap.cd : 0;
+    const c = Math.ceil(cd - 0.5);
     if (c >= 1 && c <= 3) {
-      const f = (g.countdown - 0.5) % 1;
-      ctx.save();
-      ctx.translate(W / 2, H * 0.4);
-      const s = 1 + f * 0.6;
-      ctx.scale(s, s);
+      const f = (cd - 0.5) % 1;
+      ctx.save(); ctx.translate(W / 2, H * 0.4); const s = 1 + f * 0.6; ctx.scale(s, s);
       ctx.font = `120px ${COMIC}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.lineWidth = 22; ctx.strokeStyle = '#2a1033'; ctx.strokeText(c, 0, 0);
       ctx.lineWidth = 8; ctx.strokeStyle = '#fff'; ctx.strokeText(c, 0, 0);
       ctx.fillStyle = ['#59e666', '#ffd133', '#ff5247'][c - 1]; ctx.fillText(c, 0, 0);
       ctx.restore();
     }
-    // controls reminder
-    const hs = g.humans;
-    hs.forEach((t, i) => {
-      const hy = H - 150 - (hs.length - 1 - i) * 30;
-      this.roundRect(W / 2 - 330, hy - 12, 660, 26, 13, 'rgba(0,0,0,0.5)');
-      this.label(W / 2, hy, `${t.name}: ${KEYMAPS[t.slot].help}${g.cfg.mode === 'commander' && t.slot === 0 ? ' · click for mouse-look' : ''}`, 12, t.css, 'center');
+    this.controlsCard(W / 2, H - 200, 0.85);
+  }
+
+  controlsCard(cx, cy, k = 1) {
+    const rows = CONTROLS_HELP;
+    const w = 600 * k, lh = 20 * k, h = Math.ceil(rows.length / 2) * lh + 20 * k;
+    this.roundRect(cx - w / 2, cy - h / 2, w, h, 12, 'rgba(10,15,30,0.7)');
+    rows.forEach(([key, what], i) => {
+      const col = i % 2, row = Math.floor(i / 2);
+      const x = cx - w / 2 + 14 * k + col * (w / 2), y = cy - h / 2 + 18 * k + row * lh;
+      this.label(x, y, key, 12 * k, '#ffdd33', 'left');
+      this.label(x + 68 * k, y, what, 11 * k, '#e8eeff', 'left');
     });
   }
 
-  drawPause(W, H) {
-    const g = this.g, ctx = this.ctx;
-    ctx.fillStyle = 'rgba(10,15,30,0.6)'; ctx.fillRect(0, 0, W, H);
-    this.label(W / 2, H * 0.22, 'PAUSED', 72, '#ffdd33', 'center', 'middle', COMIC);
-    const lines = KEYMAPS.map((k, i) => `${k.label}: ${k.help}`);
-    lines.forEach((l, i) => this.label(W / 2, H * 0.36 + i * 28, l, 14, PLAYER_COLORS[i].css, 'center'));
-    this.label(W / 2, H * 0.36 + 5 * 28, 'ESC / P resume · ` mute · X debug', 14, '#fff', 'center');
-    const tips = ['Pick-ups: ❤ repair · 📦 ammo · 🟧 weapon crate · 💎 power-up', 'Red barrels explode — lure enemies close!', 'Mortars arc over cover · Rockets home in · Railgun pierces', 'Bulldogs deal big ram damage. Hornets drop mines while fleeing.'];
-    tips.forEach((t, i) => this.label(W / 2, H * 0.72 + i * 24, t, 13, '#cfe', 'center'));
+  drawHelp(W, H) {
+    const ctx = this.ctx;
+    ctx.fillStyle = 'rgba(10,15,30,0.72)'; ctx.fillRect(0, 0, W, H);
+    this.label(W / 2, H * 0.12, 'HOW TO PLAY', 56, '#ffdd33', 'center', 'middle', COMIC, '#2a1033');
+    this.controlsCard(W / 2, H * 0.33, 1.2);
+    const tips = [
+      'Standard: the all-purpose shell · High Velocity: flat, fast, hits like a truck (few rounds)',
+      'Heat Seeker: lock a tank in COMMANDER view; it arcs high and dives — trees and smoke protect you',
+      'MASSIVE: one shell, one mushroom cloud. Do not stand near it.',
+      'Cluster: bursts above the target into a ring of bomblets',
+      'Flamethrower: brutal up close, but watch HEAT — your own fuel can catch fire',
+      'Rapid Fire: shreds, but the barrel climbs and wanders — fire in bursts',
+      'Air Strike: marks a zone everyone can see; bombers flatten it 5 s later (20 s cooldown)',
+      'Smoke (G): breaks locks and line of sight · Red barrels explode!',
+    ];
+    tips.forEach((t, i) => this.label(W / 2, H * 0.56 + i * 24, t, 13, '#cfe', 'center'));
+    this.label(W / 2, H * 0.56 + tips.length * 24 + 20, 'Esc to close — the battle keeps going while this is open!', 13, '#ffb070', 'center');
   }
 
   drawGameOver(W, H) {
     const g = this.g, ctx = this.ctx;
-    const k = Math.min(1, g.overT * 1.5);
+    const k = Math.min(1, (g.overT || 0) * 1.5);
     ctx.fillStyle = `rgba(10,15,30,${0.35 * k})`; ctx.fillRect(0, 0, W, H);
-    // confetti!
-    if (!this.confetti || this.confettiFor !== g.winner) {
-      this.confettiFor = g.winner;
+    const s = g.snap;
+    const w = s && s.win >= 0 ? g.tanks.get(s.win) : null;
+    if (!this.confetti || this.confettiFor !== s.win) {
+      this.confettiFor = s.win;
       const cols = ['#ff5247', '#4d8cff', '#ffd133', '#59e666', '#ff7ad9', '#ffffff'];
       this.confetti = Array.from({ length: 160 }, () => ({ x: Math.random() * W, y: -Math.random() * H, vy: 60 + Math.random() * 90, sw: Math.random() * 6, r: Math.random() * 6, c: cols[Math.floor(Math.random() * cols.length)], s: 5 + Math.random() * 6 }));
     }
-    const dt = 1 / 60;
     for (const c of this.confetti) {
-      c.y += c.vy * dt; c.sw += dt * 3; c.r += dt * 4;
+      c.y += c.vy / 60; c.sw += 0.05; c.r += 0.07;
       if (c.y > H + 10) { c.y = -10; c.x = Math.random() * W; }
       ctx.save(); ctx.translate(c.x + Math.sin(c.sw) * 14, c.y); ctx.rotate(c.r);
       ctx.fillStyle = c.c; ctx.fillRect(-c.s / 2, -c.s / 4, c.s, c.s / 2);
       ctx.restore();
     }
-    const w = g.winner;
-    ctx.save();
-    ctx.translate(W / 2, H * 0.2);
-    const s = 0.6 + 0.4 * k + Math.sin(g.realTime * 3) * 0.03;
-    ctx.scale(s, s);
-    this.label(0, 0, w ? `${w.name.replace(' (bot)', '')} WINS!` : 'DRAW!', 78, w ? w.css : '#fff', 'center', 'middle', COMIC, '#2a1033');
+    ctx.save(); ctx.translate(W / 2, H * 0.2);
+    const sc = 0.6 + 0.4 * k + Math.sin(g.realTime * 3) * 0.03; ctx.scale(sc, sc);
+    this.label(0, 0, w ? `${w.net.name.replace(' (bot)', '')} WINS!` : 'DRAW!', 78, w ? w.css : '#fff', 'center', 'middle', COMIC, '#2a1033');
     ctx.restore();
-    this.label(W / 2, H * 0.2 + 56, g.winReason || '', 16, '#fff', 'center');
-    const rows = [...g.tanks].sort((a, b) => b.score - a.score || a.deaths - b.deaths);
-    // standings sit low so the winning tank stays visible centre-screen
-    const tx = W / 2 - 300, ty = H - 80 - rows.length * 38;
-    this.roundRect(tx - 10, ty - 30, 620, 40 + rows.length * 38, 14, 'rgba(15,20,35,0.75)');
-    const cols = ['PLAYER', 'TANK', 'KILLS', 'DEATHS', 'DMG', 'ACC', 'PICKUPS'];
-    const cx = [0, 170, 290, 360, 440, 510, 560];
-    cols.forEach((c, i) => this.label(tx + cx[i], ty - 10, c, 11, '#9ab', 'left'));
+    this.label(W / 2, H * 0.2 + 56, s.why || '', 16, '#fff', 'center');
+    const rows = [...g.tanks.values()].sort((a, b) => b.net.s - a.net.s || a.net.d - b.net.d);
+    const tx = W / 2 - 220, ty = H - 80 - rows.length * 34;
+    this.roundRect(tx - 10, ty - 30, 460, 40 + rows.length * 34, 14, 'rgba(15,20,35,0.75)');
+    [['PLAYER', 0], ['VEHICLE', 200], ['KILLS', 320], ['DEATHS', 380]].forEach(([c, x]) => this.label(tx + x, ty - 10, c, 11, '#9ab', 'left'));
     rows.forEach((t, i) => {
-      const y = ty + 20 + i * 38;
-      const acc = t.stats.shots ? Math.round((100 * t.stats.hits) / t.stats.shots) : 0;
-      const vals = [`${i === 0 ? '🏆 ' : ''}${t.name}`, t.def.name, t.kills, t.deaths, Math.round(t.stats.dmg), acc + '%', t.stats.pickups];
-      vals.forEach((v, j) => this.label(tx + cx[j], y, String(v), j === 0 ? 16 : 14, j === 0 ? t.css : '#fff', 'left'));
+      const y = ty + 18 + i * 34;
+      this.label(tx, y, `${i === 0 && w ? '🏆 ' : ''}${t.net.name}`, 15, t.css, 'left');
+      this.label(tx + 200, y, t.def.name, 13, '#fff', 'left');
+      this.label(tx + 320, y, String(t.net.k), 14, '#fff', 'left');
+      this.label(tx + 380, y, String(t.net.d), 14, '#fff', 'left');
     });
-    if (g.overT > 2.5) this.label(W / 2, H * 0.2 + 84, 'Press ENTER / SPACE / G to play again', 18, '#ffdd33', 'center');
+    if ((g.overT || 0) > 2) this.label(W / 2, H * 0.2 + 84, 'Next battle starts soon · ENTER to start now', 16, '#ffdd33', 'center');
   }
 
-  // ---------- lobby ----------
+  // ---------- network lobby ----------
   drawLobby(W, H) {
-    const g = this.g, ctx = this.ctx;
-    const t = g.realTime;
-    // title
-    ctx.save();
-    ctx.translate(W / 2, H * 0.13);
-    ctx.rotate(Math.sin(t * 1.3) * 0.02);
+    const g = this.g, ctx = this.ctx, t = g.realTime;
+    ctx.save(); ctx.translate(W / 2, H * 0.12); ctx.rotate(Math.sin(t * 1.3) * 0.02);
     const title = 'MICRO BATTLE';
-    ctx.font = `${Math.min(110, W / 9)}px ${COMIC}`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
-    const letters = title.split('');
+    ctx.font = `${Math.min(104, W / 9)}px ${COMIC}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
     const total = ctx.measureText(title).width;
     let x = -total / 2;
     const cols = ['#ff5247', '#ffd133', '#4d8cff', '#59e666'];
-    letters.forEach((ch, i) => {
-      const w = ctx.measureText(ch).width;
-      const y = Math.sin(t * 3 + i * 0.5) * 8;
+    title.split('').forEach((ch, i) => {
+      const w = ctx.measureText(ch).width, y = Math.sin(t * 3 + i * 0.5) * 8;
       ctx.lineWidth = 18; ctx.strokeStyle = '#2a1033'; ctx.strokeText(ch, x + w / 2, y);
       ctx.lineWidth = 6; ctx.strokeStyle = '#fff'; ctx.strokeText(ch, x + w / 2, y);
       ctx.fillStyle = cols[i % 4]; ctx.fillText(ch, x + w / 2, y);
       x += w;
     });
     ctx.restore();
-    this.label(W / 2, H * 0.13 + 66, `${g.cfg.mode === 'birdseye' ? "BIRD'S-EYE" : 'TANK COMMANDER'} MODE · first to ${g.cfg.scoreLimit} · ${g.cfg.difficulty} bots`, 16, '#fff', 'center');
-    // player cards
-    const cw = Math.min(250, (W - 80) / 4), ch = 300, gap = 16;
+    const cfg = g.cfg || {};
+    const modeTxt = cfg.mode === 'any' ? 'any view (C to switch)' : (VIEW_NAMES[cfg.mode] || '') + ' view';
+    this.label(W / 2, H * 0.12 + 62, `NETWORK BATTLE · ${modeTxt} · first to ${cfg.scoreLimit} · ${cfg.difficulty} bots`, 15, '#fff', 'center');
+    this.label(W / 2, H * 0.12 + 86, `Friends join by opening this page from your machine's network address (port ${location.port || 80})`, 13, '#cfe', 'center');
+    const cw = Math.min(250, (W - 80) / 4), ch = 290, gap = 16;
     const x0 = W / 2 - (cw * 4 + gap * 3) / 2, y0 = H * 0.3;
-    g.slots.forEach((s, i) => {
-      const x = x0 + i * (cw + gap);
+    for (let i = 0; i < 4; i++) {
+      const p = g.lobby.players.find((q) => q.slot === i);
+      const mine = i === g.you;
       const col = PLAYER_COLORS[i];
-      const bob = s.joined ? Math.sin(t * 4 + i) * 3 : 0;
-      this.roundRect(x, y0 + bob, cw, ch, 18, s.joined ? 'rgba(20,25,45,0.82)' : 'rgba(20,25,45,0.5)', col.css);
-      this.roundRect(x, y0 + bob, cw, 40, 18, col.css);
-      this.label(x + cw / 2, y0 + bob + 21, `PLAYER ${i + 1}`, 20, '#fff', 'center', 'middle', COMIC, 'rgba(0,0,0,0.4)');
-      if (!s.joined) {
-        this.label(x + cw / 2, y0 + 110, 'BOT', 42, 'rgba(255,255,255,0.35)', 'center', 'middle', COMIC);
-        const blink = Math.floor(t * 2) % 2 === 0;
-        this.label(x + cw / 2, y0 + 180, 'press', 13, '#ccd', 'center');
-        this.label(x + cw / 2, y0 + 204, JOIN_KEYS[i], 22, blink ? '#ffdd33' : '#fff', 'center');
-        this.label(x + cw / 2, y0 + 228, 'to join', 13, '#ccd', 'center');
-        if (i === 3) this.label(x + cw / 2, y0 + 260, '(gamepad 4)', 11, '#99a', 'center');
-        return;
+      const cx = x0 + i * (cw + gap);
+      const bob = p ? Math.sin(t * 4 + i) * 3 : 0;
+      this.roundRect(cx, y0 + bob, cw, ch, 18, p ? 'rgba(20,25,45,0.85)' : 'rgba(20,25,45,0.5)', mine ? '#fff' : col.css);
+      this.roundRect(cx, y0 + bob, cw, 40, 18, col.css);
+      this.label(cx + cw / 2, y0 + bob + 21, mine ? 'YOU' : `SEAT ${i + 1}`, 20, '#fff', 'center', 'middle', COMIC, 'rgba(0,0,0,0.4)');
+      if (!p) {
+        this.label(cx + cw / 2, y0 + 120, 'BOT', 42, 'rgba(255,255,255,0.35)', 'center', 'middle', COMIC);
+        this.label(cx + cw / 2, y0 + 180, 'open seat', 13, '#ccd', 'center');
+        this.label(cx + cw / 2, y0 + 200, 'a bot drives until someone joins', 11, '#99a', 'center');
+        continue;
       }
-      const def = TANK_TYPES[s.type];
-      this.label(x + 16, y0 + bob + 72, '◀', 22, '#fff', 'left');
-      this.label(x + cw - 16, y0 + bob + 72, '▶', 22, '#fff', 'right');
-      this.label(x + cw / 2, y0 + bob + 72, def.name.toUpperCase(), 28, col.css, 'center', 'middle', COMIC);
-      this.label(x + cw / 2, y0 + bob + 100, def.role, 14, '#fff', 'center');
-      ctx.font = `12px ${FONT}`;
-      this.label(x + cw / 2, y0 + bob + 122, def.blurb, 11, '#cde', 'center', 'middle', FONT, null);
-      const pri = WEAPONS[def.weapons[0]];
-      const stats = [
-        ['SPEED', def.speed / 24], ['ARMOR', def.hp / 180], ['FIREPOWER', clamp((pri.dmg / pri.reload) / 45, 0.15, 1)],
-        ['RANGE', { hornet: 0.35, trooper: 0.6, bulldog: 0.45, thumper: 0.95, longshot: 1 }[def.id]], ['TURRET', def.turret / 4],
-      ];
-      stats.forEach(([n, v], k) => {
-        const yy = y0 + bob + 150 + k * 22;
-        this.label(x + 16, yy, n, 10, '#abc', 'left');
-        this.bar(x + 92, yy - 5, cw - 108, 10, v, col.css);
+      const def = TANK_TYPES[mine ? g.type : p.type];
+      this.label(cx + cw / 2, y0 + bob + 60, p.name, 16, '#fff', 'center');
+      if (mine) { this.label(cx + 16, y0 + bob + 92, '◀', 22, '#fff', 'left'); this.label(cx + cw - 16, y0 + bob + 92, '▶', 22, '#fff', 'right'); }
+      this.label(cx + cw / 2, y0 + bob + 92, def.name.toUpperCase(), 26, col.css, 'center', 'middle', COMIC);
+      this.label(cx + cw / 2, y0 + bob + 116, def.blurb, 11, '#cde', 'center', 'middle', FONT, null);
+      const stats = [['SPEED', def.speed / 24], ['ARMOR', def.hp / def.armor / 270], ['TURRET', def.turret / 4], ['ELEVATION', def.pitchMax / 1.3]];
+      stats.forEach(([n, val], k) => {
+        const yy = y0 + bob + 142 + k * 20;
+        this.label(cx + 16, yy, n, 10, '#abc', 'left');
+        this.bar(cx + 92, yy - 5, cw - 108, 10, val, col.css);
       });
-      this.label(x + cw / 2, y0 + bob + 272, `${WEAPONS[def.weapons[0]].name} + ${WEAPONS[def.weapons[1]].name}`, 12, '#ffe08a', 'center');
-    });
+      this.label(cx + cw / 2, y0 + bob + 232, def.weapons.map((w) => WEAPONS[w].short).join(' · '), 11, '#ffe08a', 'center');
+      this.label(cx + cw / 2, y0 + bob + 262, p.ready ? '✔ READY' : 'not ready', 16, p.ready ? '#7dff8a' : '#99a', 'center');
+    }
     const blink = Math.floor(t * 2.5) % 2 === 0;
-    this.label(W / 2, y0 + ch + 44, 'Press G or START to battle!', 26, blink ? '#ffdd33' : '#fff', 'center', 'middle', COMIC);
-    this.label(W / 2, y0 + ch + 76, 'Empty slots are filled with bots · steer left/right to change tank · press back/down to leave', 13, '#dde', 'center');
-    if (g.cfg.lobbyTimeout > 0) this.label(W / 2, y0 + ch + 100, `auto-start in ${Math.ceil(Math.max(0, g.lobbyT))}s`, 13, '#ccd', 'center');
+    this.label(W / 2, y0 + ch + 40, g.you >= 0 ? '←/→ choose vehicle · SPACE ready · ENTER start now · N rename' : 'The battle is full — you are spectating', 18, blink ? '#ffdd33' : '#fff', 'center', 'middle', COMIC);
+    this.label(W / 2, y0 + ch + 70, 'Starts when everyone is ready (or anyone presses ENTER). Empty seats are bots.', 13, '#dde', 'center');
+    if (g.snap && g.snap.lt >= 0) this.label(W / 2, y0 + ch + 92, `auto-start in ${g.snap.lt}s`, 13, '#ccd', 'center');
   }
 }
 

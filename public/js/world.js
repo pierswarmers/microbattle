@@ -6,13 +6,16 @@ import { m4, makeNoise, makeRng, clamp, lerp, smooth } from './math.js';
 export const WATER_LEVEL = -1.2;
 
 export class World {
+  /** renderer may be null (headless server): no meshes or cosmetic decoration are built. */
   constructor(renderer, models, cfg) {
     this.r = renderer;
+    this.headless = !renderer;
     this.M = models;
     this.cfg = cfg;
     this.size = cfg.mapSize;
     this.half = this.size / 2;
     this.rng = makeRng(cfg.seed * 7919 + 13);
+    this.rngC = makeRng(cfg.seed * 104729 + 7); // cosmetic-only randomness
     this.noise = makeNoise(cfg.seed);
     this.obstacles = [];
     this.cellSize = 8;
@@ -26,8 +29,7 @@ export class World {
     this.tmpM = m4.create();
     this.layout();
     this.buildHeights();
-    this.buildTerrainMesh();
-    this.buildWater();
+    if (!this.headless) { this.buildTerrainMesh(); this.buildWater(); }
     this.decorate();
     this.buildNav();
     this.pickupSpots = this.pickupSpots.filter((p) => this.reachable(p.x, p.z));
@@ -164,7 +166,7 @@ export class World {
     if (h < WATER_LEVEL - 0.6) c = [0.62, 0.62, 0.45];
     if (slope > 0.7) { const k = smooth(clamp((slope - 0.7) * 1.5, 0, 0.8)); c = [lerp(c[0], 0.58, k), lerp(c[1], 0.6, k), lerp(c[2], 0.42, k)]; }
     if (h > 24) { const k = smooth(clamp((h - 24) / 8, 0, 1)); c = [lerp(c[0], 0.98, k), lerp(c[1], 0.98, k), lerp(c[2], 1, k)]; }
-    const j = 0.98 + this.rng() * 0.04;
+    const j = 0.98 + this.rngC() * 0.04;
     return [c[0] * j, c[1] * j, c[2] * j, 0];
   }
 
@@ -213,6 +215,7 @@ export class World {
   // ---------- obstacles ----------
   addObstacle(o) {
     o.alive = true;
+    o.index = this.obstacles.length; // stable id shared by server and clients
     this.obstacles.push(o);
     this.gridInsert(o);
     return o;
@@ -334,7 +337,7 @@ export class World {
       const s = rng.range(0.9, 1.5);
       const col = rng() < 0.12 ? foliage[3 + Math.floor(rng() * 3)] : foliage[Math.floor(rng() * 3)];
       this.trees.push({ kind, x, z, s, top: h + 7 * s, col, m: m4.compose(m4.create(), x, h - 0.1, z, rng() * 6.28, 0, 0, s) });
-      this.addObstacle({ x, z, r: 0.7 * s, top: h + 7 * s, kind: 'tree' });
+      this.addObstacle({ x, z, r: 0.7 * s, top: h + 7 * s, kind: 'tree', cr: 2.4 * s, cb: h + 2.4 * s });
     });
     // backdrop trees on the border hills (no collision needed — unreachable)
     for (let i = 0; i < 260 * dens; i++) {
@@ -351,7 +354,7 @@ export class World {
       const s = rng.range(0.8, 1.6);
       const c = rng() < 0.75 ? [1, 0.2, 0.18] : [0.65, 0.35, 1];
       M.mushroom.add(m4.compose(m, x, h - 0.1, z, rng() * 6.28, (rng() - 0.5) * 0.15, (rng() - 0.5) * 0.15, s), c[0], c[1], c[2]);
-      this.addObstacle({ x, z, r: 0.7 * s, top: h + 3.5 * s, kind: 'mushroom' });
+      this.addObstacle({ x, z, r: 0.7 * s, top: h + 3.5 * s, kind: 'mushroom', cr: 2 * s, cb: h + 2 * s });
     });
 
     // --- destructibles ---
@@ -381,50 +384,6 @@ export class World {
       }
     });
 
-    // --- small non-colliding details: flowers, grass, lily pads ---
-    const petal = [[1, 0.35, 0.45], [1, 0.85, 0.2], [0.65, 0.45, 1], [1, 1, 1], [1, 0.55, 0.15], [0.4, 0.7, 1]];
-    const gq = this.cfg.quality === 'low' ? 0.4 : this.cfg.quality === 'high' ? 1.4 : 1;
-    let nf = 0, tries = 0;
-    while (nf < 1400 * gq && tries++ < 20000) {
-      // flowers come in little clumps
-      const cx = rng.range(-H * 0.85, H * 0.85), cz = rng.range(-H * 0.85, H * 0.85);
-      const meadow = this.noise.fbm(cx * 0.02 + 70, cz * 0.02 - 20, 3);
-      if (meadow < 0.5 && rng() > 0.25) continue;
-      const col = petal[Math.floor(rng() * petal.length)];
-      for (let k = 0; k < 8; k++) {
-        const x = cx + rng.range(-3, 3), z = cz + rng.range(-3, 3);
-        const h = this.heightAt(x, z);
-        if (h < WATER_LEVEL + 0.8 || this.pathDist(x, z) < 3) continue;
-        const s = rng.range(0.9, 1.6);
-        M.flower.add(m4.compose(m, x, h - 0.05, z, rng() * 6.28, 0, 0, s), col[0], col[1], col[2]);
-        nf++;
-      }
-    }
-    for (let i = 0; i < 7000 * gq; i++) {
-      const x = rng.range(-H * 0.9, H * 0.9), z = rng.range(-H * 0.9, H * 0.9);
-      const h = this.heightAt(x, z);
-      if (h < WATER_LEVEL + 0.5 || h > 16 || this.pathDist(x, z) < 3) continue;
-      const s = rng.range(0.8, 1.4);
-      const v = this.noise(x * 0.05 + 9, z * 0.05 + 3);
-      M.grass.add(m4.compose(m, x, h - 0.05, z, rng() * 6.28, 0, 0, s, s * rng.range(0.8, 1.4), s), lerp(0.42, 0.6, v), lerp(0.75, 0.88, v), 0.3);
-    }
-    for (const p of this.ponds) {
-      for (let i = 0; i < 9; i++) {
-        const a = rng() * 6.28, d = rng.range(2, p.r * 1.2);
-        const x = p.x + Math.cos(a) * d, z = p.z + Math.sin(a) * d;
-        if (this.heightAt(x, z) > WATER_LEVEL - 0.3) continue;
-        M.lily.add(m4.compose(m, x, WATER_LEVEL + 0.05, z, rng() * 6.28, 0, 0, rng.range(0.6, 1.3)));
-      }
-      for (let i = 0; i < 3; i++) this.ambient.ducks.push({ p, a: rng() * 6.28, r: rng.range(3, p.r * 0.9), sp: rng.range(0.15, 0.35) * (rng() < 0.5 ? -1 : 1), bob: rng() * 6 });
-      // reeds around the shore
-      for (let i = 0; i < 26; i++) {
-        const a = rng() * 6.28, d = p.r * rng.range(1.25, 1.5);
-        const x = p.x + Math.cos(a) * d, z = p.z + Math.sin(a) * d;
-        const h = this.heightAt(x, z);
-        M.grass.add(m4.compose(m, x, h - 0.1, z, rng() * 6.28, 0, 0, 2.2, 3.5, 2.2), 0.55, 0.75, 0.35);
-      }
-    }
-
     // --- pickup spots ---
     let ptries = 0;
     const want = Math.round(clamp(this.size / 18, 12, 30));
@@ -435,16 +394,65 @@ export class World {
       this.pickupSpots.push({ x, z });
     }
 
+
+    // everything below is purely cosmetic: it uses its own RNG so the server (which skips it)
+    // and every client agree on obstacles and pickup spots regardless of graphics quality
+    if (this.headless) return;
+    const rngC = this.rngC;
+    // --- small non-colliding details: flowers, grass, lily pads ---
+    const petal = [[1, 0.35, 0.45], [1, 0.85, 0.2], [0.65, 0.45, 1], [1, 1, 1], [1, 0.55, 0.15], [0.4, 0.7, 1]];
+    const gq = this.cfg.quality === 'low' ? 0.4 : this.cfg.quality === 'high' ? 1.4 : 1;
+    let nf = 0, tries = 0;
+    while (nf < 1400 * gq && tries++ < 20000) {
+      // flowers come in little clumps
+      const cx = rngC.range(-H * 0.85, H * 0.85), cz = rngC.range(-H * 0.85, H * 0.85);
+      const meadow = this.noise.fbm(cx * 0.02 + 70, cz * 0.02 - 20, 3);
+      if (meadow < 0.5 && rngC() > 0.25) continue;
+      const col = petal[Math.floor(rngC() * petal.length)];
+      for (let k = 0; k < 8; k++) {
+        const x = cx + rngC.range(-3, 3), z = cz + rngC.range(-3, 3);
+        const h = this.heightAt(x, z);
+        if (h < WATER_LEVEL + 0.8 || this.pathDist(x, z) < 3) continue;
+        const s = rngC.range(0.9, 1.6);
+        M.flower.add(m4.compose(m, x, h - 0.05, z, rngC() * 6.28, 0, 0, s), col[0], col[1], col[2]);
+        nf++;
+      }
+    }
+    for (let i = 0; i < 7000 * gq; i++) {
+      const x = rngC.range(-H * 0.9, H * 0.9), z = rngC.range(-H * 0.9, H * 0.9);
+      const h = this.heightAt(x, z);
+      if (h < WATER_LEVEL + 0.5 || h > 16 || this.pathDist(x, z) < 3) continue;
+      const s = rngC.range(0.8, 1.4);
+      const v = this.noise(x * 0.05 + 9, z * 0.05 + 3);
+      M.grass.add(m4.compose(m, x, h - 0.05, z, rngC() * 6.28, 0, 0, s, s * rngC.range(0.8, 1.4), s), lerp(0.42, 0.6, v), lerp(0.75, 0.88, v), 0.3);
+    }
+    for (const p of this.ponds) {
+      for (let i = 0; i < 9; i++) {
+        const a = rngC() * 6.28, d = rngC.range(2, p.r * 1.2);
+        const x = p.x + Math.cos(a) * d, z = p.z + Math.sin(a) * d;
+        if (this.heightAt(x, z) > WATER_LEVEL - 0.3) continue;
+        M.lily.add(m4.compose(m, x, WATER_LEVEL + 0.05, z, rngC() * 6.28, 0, 0, rngC.range(0.6, 1.3)));
+      }
+      for (let i = 0; i < 3; i++) this.ambient.ducks.push({ p, a: rngC() * 6.28, r: rngC.range(3, p.r * 0.9), sp: rngC.range(0.15, 0.35) * (rngC() < 0.5 ? -1 : 1), bob: rngC() * 6 });
+      // reeds around the shore
+      for (let i = 0; i < 26; i++) {
+        const a = rngC() * 6.28, d = p.r * rngC.range(1.25, 1.5);
+        const x = p.x + Math.cos(a) * d, z = p.z + Math.sin(a) * d;
+        const h = this.heightAt(x, z);
+        M.grass.add(m4.compose(m, x, h - 0.1, z, rngC() * 6.28, 0, 0, 2.2, 3.5, 2.2), 0.55, 0.75, 0.35);
+      }
+    }
+
     // --- sky life ---
-    for (let i = 0; i < 16; i++) this.ambient.clouds.push({ x: rng.range(-H * 1.4, H * 1.4), z: rng.range(-H * 1.4, H * 1.4), y: rng.range(80, 120), s: rng.range(0.9, 2.0), sp: rng.range(1.5, 3) });
+    for (let i = 0; i < 16; i++) this.ambient.clouds.push({ x: rngC.range(-H * 1.4, H * 1.4), z: rngC.range(-H * 1.4, H * 1.4), y: rngC.range(80, 120), s: rngC.range(0.9, 2.0), sp: rngC.range(1.5, 3) });
     for (let f = 0; f < 4; f++) {
-      const cx = rng.range(-H * 0.6, H * 0.6), cz = rng.range(-H * 0.6, H * 0.6), y = rng.range(22, 34), R = rng.range(25, 50), sp = rng.range(0.12, 0.2) * (rng() < 0.5 ? -1 : 1);
-      for (let i = 0; i < 5; i++) this.ambient.birds.push({ cx, cz, y: y + rng.range(-1, 1), R, sp, off: i * 0.06 + rng() * 0.02, lat: (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 1.6, flap: rng() * 6 });
+      const cx = rngC.range(-H * 0.6, H * 0.6), cz = rngC.range(-H * 0.6, H * 0.6), y = rngC.range(22, 34), R = rngC.range(25, 50), sp = rngC.range(0.12, 0.2) * (rngC() < 0.5 ? -1 : 1);
+      for (let i = 0; i < 5; i++) this.ambient.birds.push({ cx, cz, y: y + rngC.range(-1, 1), R, sp, off: i * 0.06 + rngC() * 0.02, lat: (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 1.6, flap: rngC() * 6 });
     }
     const flyCols = [[1, 0.6, 0.1], [0.4, 0.7, 1], [1, 1, 0.4], [1, 0.4, 0.7], [1, 1, 1]];
     for (let i = 0; i < 40; i++) {
-      const x = rng.range(-H * 0.8, H * 0.8), z = rng.range(-H * 0.8, H * 0.8);
-      this.ambient.flies.push({ hx: x, hz: z, x, z, y: 1.5, t: rng() * 100, col: flyCols[Math.floor(rng() * flyCols.length)], sp: rng.range(0.6, 1.2) });
+      const x = rngC.range(-H * 0.8, H * 0.8), z = rngC.range(-H * 0.8, H * 0.8);
+      this.ambient.flies.push({ hx: x, hz: z, x, z, y: 1.5, t: rngC() * 100, col: flyCols[Math.floor(rngC() * flyCols.length)], sp: rngC.range(0.6, 1.2) });
     }
   }
 

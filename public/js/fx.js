@@ -62,6 +62,88 @@ export class FX {
     if (opts.text || (s >= 1.6 && R() < 0.85) || R() < 0.12) this.popText(x, y + 3 * s, z, opts.text || BOOM_WORDS[Math.floor(R() * BOOM_WORDS.length)], 1 + s * 0.35);
   }
 
+  /** MASSIVE: blinding flash, fireball, rising stem and a mushroom cap that spreads and lingers. */
+  nuke(x, y, z) {
+    const R = Math.random;
+    const g = this.world.heightAt(x, z);
+    this.add({ k: 'glow', x, y: g + 4, z, vx: 0, vy: 0, vz: 0, life: 0.35, s0: 14, s1: 34, c0: [1, 1, 0.95], c1: [1, 0.8, 0.4], a: 1 });
+    for (let i = 0; i < 14; i++) {
+      const a = R() * Math.PI * 2, sp = 2 + R() * 4;
+      this.add({ k: 'fire', x: x + Math.cos(a) * 3, y: g + 3 + R() * 4, z: z + Math.sin(a) * 3, vx: Math.cos(a) * sp, vy: 4 + R() * 4, vz: Math.sin(a) * sp, drag: 1.5, rise: 3, life: 1.6 + R(), s0: 5, s1: 11 + R() * 4, c0: [1, 0.95, 0.5], c1: [0.9, 0.25, 0.05], a: 1 });
+    }
+    // stem: a column of fire turning to smoke as it climbs
+    for (let i = 0; i < 34; i++) {
+      const fire = i < 18;
+      this.add({ k: fire ? 'fire' : 'puff', x: x + (R() - 0.5) * 3, y: g + 2, z: z + (R() - 0.5) * 3, vx: (R() - 0.5) * 1.2, vy: 14 + R() * 6, vz: (R() - 0.5) * 1.2, drag: 0.55, life: 3.2 + R() * 1.5,
+        s0: 3.5, s1: 6 + R() * 2, c0: fire ? [1, 0.75, 0.25] : [0.55, 0.45, 0.4], c1: fire ? [0.55, 0.22, 0.1] : [0.8, 0.78, 0.75], a: 0.95, delay: i * 0.05 });
+    }
+    // cap: rolling ring of cloud at the top of the stem
+    for (let i = 0; i < 40; i++) {
+      const a = (i / 40) * Math.PI * 2, sp = 3 + R() * 4, h = 30 + R() * 8;
+      const hot = i % 3 === 0;
+      this.add({ k: hot ? 'fire' : 'puff', x: x + Math.cos(a) * 4, y: g + h, z: z + Math.sin(a) * 4, vx: Math.cos(a) * sp, vy: 1 + R() * 2, vz: Math.sin(a) * sp, drag: 0.4, life: 5 + R() * 3,
+        s0: 5, s1: 13 + R() * 5, c0: hot ? [1, 0.6, 0.2] : [0.7, 0.55, 0.45], c1: hot ? [0.5, 0.3, 0.25] : [0.86, 0.84, 0.82], a: 0.9, delay: 1.1 + R() * 0.6 });
+    }
+    // ground shockwaves and a racing dust ring
+    this.add({ k: 'shock', x, y: g + 0.4, z, life: 1.3, s0: 4, s1: 90, c0: [1, 0.9, 0.7], a: 1 });
+    this.add({ k: 'shock', x, y: g + 6, z, life: 2.2, s0: 8, s1: 70, c0: [1, 1, 1], a: 0.6, delay: 0.3 });
+    for (let i = 0; i < 46; i++) {
+      const a = (i / 46) * Math.PI * 2, sp = 22 + R() * 14;
+      this.add({ k: 'puff', x: x + Math.cos(a) * 6, y: g + 1, z: z + Math.sin(a) * 6, vx: Math.cos(a) * sp, vy: 1 + R() * 2, vz: Math.sin(a) * sp, drag: 1.4, life: 2.5 + R(), s0: 2.5, s1: 7, c0: [0.75, 0.65, 0.5], c1: [0.85, 0.8, 0.72], a: 0.75 });
+    }
+    for (let i = 0; i < 30; i++) {
+      const a = R() * Math.PI * 2, sp = 10 + R() * 22;
+      this.add({ k: 'chunk', x, y: g + 2, z, vx: Math.cos(a) * sp, vy: 14 + R() * 20, vz: Math.sin(a) * sp, grav: 26, life: 3 + R(), s0: 0.4 + R() * 0.6, rx: R() * 6, ry: R() * 6, wx: (R() - 0.5) * 18, wy: (R() - 0.5) * 18, c0: [0.4, 0.3, 0.2], bounce: true });
+    }
+    this.scorch(x, z, 18);
+    this.popText(x, g + 20, z, 'KA-BOOOOM!', 2.6, '#ffdd33', true);
+  }
+
+  /** Cluster shell pops open: bright pop and a fan of glittering sparks. */
+  clusterBurst(x, y, z) {
+    const R = Math.random;
+    const cols = [[1, 0.4, 0.8], [0.6, 0.5, 1], [1, 0.85, 0.3], [0.4, 1, 0.8]];
+    this.add({ k: 'glow', x, y, z, vx: 0, vy: 0, vz: 0, life: 0.15, s0: 1.5, s1: 3.5, c0: [1, 0.9, 1], c1: [1, 0.4, 0.8], a: 1 });
+    for (let i = 0; i < 26; i++) {
+      const a = R() * Math.PI * 2, e = R() * 1.2 - 0.3, sp = 8 + R() * 10;
+      const c = cols[i % cols.length];
+      this.add({ k: 'spark', x, y, z, vx: Math.cos(a) * Math.cos(e) * sp, vy: Math.sin(e) * sp, vz: Math.sin(a) * Math.cos(e) * sp, grav: 14, drag: 1, life: 0.6 + R() * 0.4, w: 0.12, len: 0.6, c0: [1, 1, 1], c1: c, a: 1 });
+    }
+    this.add({ k: 'shock', x, y, z, life: 0.35, s0: 0.5, s1: 7, c0: [1, 0.6, 0.9], a: 0.8 });
+    this.add({ k: 'puff', x, y, z, vx: 0, vy: 1, vz: 0, life: 1.4, s0: 1, s1: 3, c0: [0.9, 0.85, 0.95], c1: [0.95, 0.95, 0.95], a: 0.6 });
+  }
+
+  /** Little bomblet blast: punchy, colourful, quick. */
+  bomblet(x, y, z) {
+    const R = Math.random;
+    const c = [[1, 0.45, 0.85], [1, 0.85, 0.3], [0.6, 0.55, 1], [0.4, 1, 0.75]][Math.floor(R() * 4)];
+    this.add({ k: 'fire', x, y: y + 0.4, z, vx: 0, vy: 3, vz: 0, drag: 2, life: 0.4, s0: 1.2, s1: 2.6, c0: [1, 1, 0.8], c1: c, a: 1 });
+    for (let i = 0; i < 4; i++) { const a = R() * 6.28; this.add({ k: 'fire', x, y: y + 0.4, z, vx: Math.cos(a) * 5, vy: 2 + R() * 3, vz: Math.sin(a) * 5, drag: 4, life: 0.35 + R() * 0.2, s0: 0.7, s1: 1.4, c0: [1, 0.9, 0.5], c1: c, a: 1 }); }
+    for (let i = 0; i < 8; i++) { const a = R() * 6.28, sp = 6 + R() * 8; this.add({ k: 'spark', x, y: y + 0.3, z, vx: Math.cos(a) * sp, vy: 5 + R() * 6, vz: Math.sin(a) * sp, grav: 20, life: 0.35, w: 0.08, len: 0.5, c0: [1, 1, 1], c1: c, a: 1 }); }
+    this.add({ k: 'shock', x, y: this.world.heightAt(x, z) + 0.25, z, life: 0.3, s0: 0.5, s1: 5, c0: c, a: 0.8 });
+    this.add({ k: 'puff', x, y: y + 0.5, z, vx: 0, vy: 1.5, vz: 0, life: 1.2, s0: 0.7, s1: 2.2, c0: [0.6, 0.6, 0.6], c1: [0.85, 0.85, 0.85], a: 0.55 });
+    if (y - this.world.heightAt(x, z) < 2) this.scorch(x, z, 1.4);
+  }
+
+  /** High-velocity round strike: blinding blue-white spark fan and a hard shock ring. */
+  hvImpact(x, y, z) {
+    const R = Math.random;
+    this.add({ k: 'glow', x, y, z, vx: 0, vy: 0, vz: 0, life: 0.12, s0: 2.5, s1: 5, c0: [0.8, 0.95, 1], c1: [0.4, 0.7, 1], a: 1 });
+    for (let i = 0; i < 40; i++) {
+      const a = R() * Math.PI * 2, sp = 14 + R() * 24;
+      this.add({ k: 'spark', x, y, z, vx: Math.cos(a) * sp, vy: 3 + R() * 14, vz: Math.sin(a) * sp, grav: 24, life: 0.4 + R() * 0.4, w: 0.09, len: 1.2, c0: [1, 1, 1], c1: [0.4, 0.8, 1], a: 1 });
+    }
+    this.add({ k: 'shock', x, y, z, life: 0.3, s0: 1, s1: 11, c0: [0.7, 0.9, 1], a: 1 });
+    this.popText(x, y + 3, z, ['THWACK!', 'CLANG!', 'KER-CHUNK!'][Math.floor(R() * 3)], 1.1, '#9fe7ff', true);
+  }
+
+  /** One drifting puff of a smoke screen. */
+  smokePuff(x, y, z, r) {
+    const R = Math.random;
+    const g = 0.82 + R() * 0.12;
+    this.add({ k: 'puff', x: x + (R() - 0.5) * r * 1.4, y: y + R() * 3, z: z + (R() - 0.5) * r * 1.4, vx: (R() - 0.5) * 0.8, vy: 0.4 + R() * 0.5, vz: (R() - 0.5) * 0.8, life: 3 + R() * 1.5, s0: 2.5, s1: 5 + R() * 2.5, c0: [g, g, g], c1: [g + 0.05, g + 0.05, g + 0.05], a: 0.85 });
+  }
+
   /** Smaller puff for bullet hits. */
   impact(x, y, z, col = [1, 0.9, 0.5], n = 6) {
     const R = Math.random;

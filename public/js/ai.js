@@ -1,45 +1,49 @@
-// Bot brains: target selection, needs (health/ammo/power-ups), A* navigation, steering,
-// stuck recovery, ballistic aiming with target leading, and weapon choice by range.
+// Bot brains: target selection, needs (health/ammo/power-ups), A* navigation, steering, stuck recovery,
+// ballistic aiming with target leading, weapon choice by range, seeker locks, air strikes and smoke.
+// Bots drive their tank through the same input record network players send.
 import { WEAPONS } from './defs.js';
 import { wrapAngle, clamp } from './math.js';
 
 const DIFFICULTY = {
-  easy: { aimErr: 0.11, react: 0.9, lead: 0.3, turretMul: 0.6, sense: 90, fireTol: 1.6, homing: 0.3 },
-  normal: { aimErr: 0.045, react: 0.45, lead: 0.75, turretMul: 0.85, sense: 130, fireTol: 1.1, homing: 0.6 },
-  hard: { aimErr: 0.015, react: 0.18, lead: 1.0, turretMul: 1.0, sense: 180, fireTol: 0.8, homing: 1.0 },
+  easy: { aimErr: 0.11, react: 0.9, lead: 0.3, turretMul: 0.6, sense: 100, fireTol: 1.6, lockMul: 2.2, smoke: 0.3 },
+  normal: { aimErr: 0.045, react: 0.45, lead: 0.75, turretMul: 0.85, sense: 140, fireTol: 1.1, lockMul: 1.4, smoke: 0.7 },
+  hard: { aimErr: 0.015, react: 0.18, lead: 1.0, turretMul: 1.0, sense: 190, fireTol: 0.8, lockMul: 1.0, smoke: 1 },
 };
 
-/** Preferred engagement distance per tank type — this is what makes bots play each style. */
+/** Preferred engagement distance per vehicle — this is what makes bots play each style. */
 const STYLE = {
-  hornet: { range: 16, strafe: 1.0, flee: 0.3 },
-  trooper: { range: 34, strafe: 0.6, flee: 0.3 },
-  bulldog: { range: 6, strafe: 0.15, flee: 0.15 },
-  thumper: { range: 75, strafe: 0.3, flee: 0.45 },
-  longshot: { range: 95, strafe: 0.25, flee: 0.45 },
+  scout: { range: 18, strafe: 1.0, flee: 0.2 },
+  standard: { range: 40, strafe: 0.6, flee: 0.25 },
+  artillery: { range: 80, strafe: 0.3, flee: 0.45 },
+  superheavy: { range: 8, strafe: 0.15, flee: 0.1 },
 };
 
-/** Solve launch pitch for speed v, gravity g, horizontal dist x and height diff y. high=true picks the lob arc. */
+/** Launch pitch for speed v, gravity g, horizontal dist x and height diff y. high=true picks the lob arc. */
 export function ballisticPitch(v, g, x, y, high = false) {
   if (g <= 0) return Math.atan2(y, x);
   const v2 = v * v;
   const disc = v2 * v2 - g * (g * x * x + 2 * y * v2);
-  if (disc < 0) return high ? 0.8 : Math.PI / 4; // out of range: best effort
+  if (disc < 0) return high ? 0.8 : Math.PI / 4;
   const s = Math.sqrt(disc);
   return Math.atan((high ? v2 + s : v2 - s) / (g * x));
 }
 
+/** Launch speed so a projectile fired at angle `pitch` lands `dist` away on level ground. */
+export function seekerSpeed(dist, g, pitch) {
+  return Math.sqrt((g * dist) / Math.max(0.05, Math.sin(2 * pitch)));
+}
+
 export class Bot {
-  constructor(game, tank, difficulty) {
-    this.g = game;
+  constructor(sim, tank, difficulty) {
+    this.g = sim;
     this.t = tank;
     this.d = DIFFICULTY[difficulty] || DIFFICULTY.normal;
-    this.style = STYLE[tank.def.id];
     this.target = null;
     this.targetSince = 0;
     this.path = null;
     this.pathGoal = null;
     this.pathT = 0;
-    this.thinkT = Math.random() * 0.2;
+    this.thinkT = Math.random() * 0.3;
     this.stuckT = 0;
     this.unstickT = 0;
     this.unstickTurn = 1;
@@ -49,31 +53,33 @@ export class Bot {
     this.goal = null;
     this.goalKind = 'wander';
     this.wanderT = 0;
-    this.ctrl = { throttle: 0, turn: 0, aimYaw: tank.yaw, aimPitch: 0.05, fire: false, weapon: null };
+    this.lockT = 0;
+    this.smokeT = 0;
+    this.weapon = null;
   }
 
-  enemies() { return this.g.tanks.filter((o) => o !== this.t && o.alive && !o.eliminated); }
+  get style() { return STYLE[this.t.def.id]; }
 
   pickTarget() {
-    const t = this.t;
+    const t = this.t, g = this.g;
     let best = null, bestScore = 1e9;
-    for (const e of this.enemies()) {
+    for (const e of g.tanks) {
+      if (e === t || !e.alive || e.eliminated) continue;
       const d = Math.hypot(e.x - t.x, e.z - t.z);
       if (e.power.ghost > 0 && d > 12) continue;
-      if (e.invulnT > 0.3) continue; // don't waste shells on spawn-protected tanks
+      if (e.invulnT > 0.3) continue;
       if (d > this.d.sense && e !== t.lastHitBy) continue;
-      const los = !this.g.world.segmentBlocked(t.x, t.y + 2, t.z, e.x, e.y + 1.5, e.z);
+      const los = g.los(t, e);
       let s = d - (los ? 35 : 0) - (1 - e.hp / e.maxHp) * 25;
-      if (e === t.lastHitBy && t.lastHitT > this.g.time - 4) s -= 40;
-      if (e === this.target) s -= 15; // hysteresis
+      if (e === t.lastHitBy && t.lastHitT > g.time - 4) s -= 40;
+      if (e === this.target) s -= 15;
       if (e.human) s -= 5;
-      if (t.def.id === 'bulldog') s += d * 0.8; // brawlers go for whoever is closest
+      if (t.def.id === 'superheavy') s += d * 0.8;
       if (s < bestScore) { bestScore = s; best = e; }
     }
-    if (best !== this.target) { this.target = best; this.targetSince = this.g.time; }
+    if (best !== this.target) { this.target = best; this.targetSince = g.time; this.lockT = 0; }
   }
 
-  /** Choose where to drive: pickups when in need, otherwise toward/around the target. */
   chooseGoal() {
     const t = this.t, g = this.g;
     const hpFrac = t.hp / t.maxHp;
@@ -87,14 +93,21 @@ export class Bot {
       }
       return best;
     };
+    // flee an incoming air strike first
+    for (const s of g.strikes) {
+      if (s.t > -0.5 && Math.hypot(s.x - t.x, s.z - t.z) < s.r + 10) {
+        const dx = t.x - s.x, dz = t.z - s.z, dl = Math.hypot(dx, dz) || 1;
+        this.goal = [s.x + (dx / dl) * (s.r + 18), s.z + (dz / dl) * (s.r + 18)];
+        this.goalKind = 'escape';
+        this.goalPickup = null;
+        return;
+      }
+    }
     let p = null;
     if (hpFrac < 0.45) p = near('health', 160);
     if (!p && ammoFrac < 0.25) p = near('ammo', 160);
     if (!p && !this.target) p = near('power', 120) || near('weapon', 120) || (hpFrac < 0.9 ? near('health', 80) : null);
-    if (!p && this.target) {
-      const pp = near('power', 22) || near('weapon', 18);
-      if (pp) p = pp;
-    }
+    if (!p && this.target) p = near('power', 22) || near('weapon', 18);
     if (p) { this.goal = [p.x, p.z]; this.goalKind = 'pickup'; this.goalPickup = p; return; }
     this.goalPickup = null;
     const e = this.target;
@@ -102,7 +115,6 @@ export class Bot {
       const dx = t.x - e.x, dz = t.z - e.z, d = Math.hypot(dx, dz) || 1;
       const R = this.style.range;
       if (d > R + 12) { this.goal = [e.x, e.z]; this.goalKind = 'chase'; return; }
-      // orbit / hold range: point on a ring around the target, rotated by strafe direction
       const a = Math.atan2(dz, dx) + this.strafeDir * this.style.strafe * 0.9;
       const rr = d < R - 8 ? R + 4 : R;
       this.goal = [e.x + Math.cos(a) * rr, e.z + Math.sin(a) * rr];
@@ -112,51 +124,47 @@ export class Bot {
     if (!this.goal || this.goalKind !== 'wander' || this.wanderT <= 0 || Math.hypot(this.goal[0] - t.x, this.goal[1] - t.z) < 8) {
       const spots = g.world.pickupSpots;
       const s = spots[Math.floor(Math.random() * spots.length)];
-      this.goalPickup = null;
       this.goal = s ? [s.x, s.z] : [0, 0];
       this.goalKind = 'wander';
       this.wanderT = 12;
     }
   }
 
-  chooseWeapon(dist, los) {
+  chooseWeapon(dist, los, e) {
     const t = this.t;
     let best = null, bestScore = -1e9;
     for (const w of t.weapons) {
       if (w.ammo <= 0) continue;
-      const W = WEAPONS[w.id];
-      let s = 0;
-      switch (W.kind) {
-        case 'flame': s = dist < 14 ? 90 : -100; break;
-        case 'bullet': s = dist < 60 ? 40 : dist < 100 ? 10 : -50; break;
-        case 'shell': s = dist < 110 ? 55 : 15; break;
-        case 'rocket': s = dist > 20 && dist < 90 ? (Math.hypot(this.target?.vx || 0, this.target?.vz || 0) > 7 ? 62 : 48) : 5; break;
-        case 'lob': s = !los ? 70 : dist > 30 ? 45 : -60; break;
-        case 'rail': s = dist > 25 ? 75 : 35; break;
-        case 'mine': s = -200; break;
+      let s = -100;
+      switch (w.id) {
+        case 'flame': s = dist < 15 ? (t.heat < 2.2 ? 90 : -40) : -100; break;
+        case 'rapid': s = dist < 70 ? 60 : dist < 110 ? 30 : -50; break;
+        case 'standard': s = dist < 130 ? 50 : 20; break;
+        case 'highvel': s = dist > 25 && los && e.hp > 30 ? 66 : -20; break;
+        case 'seeker': s = dist > 25 && dist < 190 ? (los ? 62 : 70) : -50; break;
+        case 'cluster': s = dist > 30 && dist < 150 ? 58 : -40; break;
+        case 'massive': s = dist > 45 && dist < 150 && e.hp > 60 ? 100 : -100; break;
+        case 'strike': s = t.strikeCd <= 0 && dist > 35 && dist < 200 && Math.hypot(e.vx, e.vz) < 9 ? 95 : -200; break;
       }
-      if (!los && W.kind !== 'lob') s -= 60;
+      if (!los && !['seeker', 'cluster', 'strike', 'standard'].includes(w.id)) s -= 60;
+      if (!los && w.id === 'standard' && t.def.pitchMax < 1) s -= 60;
       if (s > bestScore) { bestScore = s; best = w.id; }
     }
     return best;
   }
 
   update(dt) {
-    const t = this.t, g = this.g, c = this.ctrl;
-    if (!t.alive) { c.throttle = 0; c.turn = 0; c.fire = false; return c; }
-    this.thinkT -= dt;
-    this.wanderT -= dt;
-    this.strafeT -= dt;
+    const t = this.t, g = this.g, c = t.input;
+    if (!t.alive) { c.throttle = 0; c.turn = 0; c.fire = false; return; }
+    this.thinkT -= dt; this.wanderT -= dt; this.strafeT -= dt;
     if (this.strafeT <= 0) { this.strafeDir *= -1; this.strafeT = 3 + Math.random() * 4; }
-    if (this.thinkT <= 0) {
-      this.thinkT = 0.35;
-      this.pickTarget();
-      this.chooseGoal();
-    }
+    let thinking = false;
+    if (this.thinkT <= 0) { this.thinkT = 0.35; thinking = true; this.pickTarget(); this.chooseGoal(); }
 
     // ---- navigation ----
     const goal = this.goal;
     let steerX = 0, steerZ = 0, wantReverse = false;
+    this.charging = false;
     if (goal) {
       this.pathT -= dt;
       const goalMoved = !this.pathGoal || Math.hypot(this.pathGoal[0] - goal[0], this.pathGoal[1] - goal[1]) > 8;
@@ -165,143 +173,122 @@ export class Bot {
         else {
           this.path = g.world.findPath(t.x, t.z, goal[0], goal[1], 12000);
           if (!this.path) {
-            // unreachable goal: remember it and choose something else instead of ramming the shoreline
             if (this.goalPickup) this.goalPickup.unreachable = g.time + 20;
             this.goal = null; this.wanderT = 0; this.goalKind = 'wander';
             this.chooseGoal();
             this.path = [this.goal || [t.x, t.z]];
           }
         }
-        this.pathGoal = goal.slice();
+        this.pathGoal = (this.goal || goal).slice();
         this.pathT = 1.5 + Math.random() * 0.5;
       }
       while (this.path.length > 1 && Math.hypot(this.path[0][0] - t.x, this.path[0][1] - t.z) < 5) this.path.shift();
       const wp = this.path[0];
       steerX = wp[0] - t.x; steerZ = wp[1] - t.z;
-      const dist = Math.hypot(steerX, steerZ);
-      if (this.goalKind === 'fight' && dist < 3) { steerX = 0; steerZ = 0; }
-      // long-range tanks back away to keep their preferred distance
-      if (this.target && this.style.flee > 0.3) {
+      if (this.goalKind === 'fight' && Math.hypot(steerX, steerZ) < 3) { steerX = 0; steerZ = 0; }
+      if (this.target && this.style.flee > 0.3 && this.goalKind !== 'escape') {
         const dT = Math.hypot(this.target.x - t.x, this.target.z - t.z);
-        if (dT < this.style.range * 0.8) {
-          wantReverse = true;
-          steerX = t.x - this.target.x; steerZ = t.z - this.target.z;
-        }
+        if (dT < this.style.range * 0.8) { wantReverse = true; steerX = t.x - this.target.x; steerZ = t.z - this.target.z; }
       }
-      // brawlers charge in for the ram once close
-      if (this.target && t.def.id === 'bulldog') {
+      if (this.target && t.def.id === 'superheavy' && this.goalKind !== 'escape') {
         const dT = Math.hypot(this.target.x - t.x, this.target.z - t.z);
-        if (dT < 16 && g.world.navLineClear(t.x, t.z, this.target.x, this.target.z)) {
-          steerX = this.target.x - t.x; steerZ = this.target.z - t.z;
-          this.charging = true;
-        } else this.charging = false;
+        if (dT < 16 && g.world.navLineClear(t.x, t.z, this.target.x, this.target.z)) { steerX = this.target.x - t.x; steerZ = this.target.z - t.z; this.charging = true; }
       }
     }
-
-    // obstacle avoidance feelers
-    const fwdYaw = t.yaw;
-    const avoid = this.feel(fwdYaw);
-
+    const avoid = this.feel(t.yaw);
     let throttle = 0, turn = 0;
     if (steerX || steerZ) {
       let desired = Math.atan2(steerX, steerZ);
       let reverse = false;
-      if (wantReverse) {
-        const back = wrapAngle(desired + Math.PI - fwdYaw);
-        // steerX/Z already points away from the threat; reverse if that is roughly behind us
-        const away = wrapAngle(desired - fwdYaw);
-        if (Math.abs(away) > 1.9) { reverse = true; desired = desired + Math.PI; }
-        else if (Math.abs(back) < 1.2) { reverse = true; desired = desired + Math.PI; }
-      }
-      const diff = wrapAngle(desired - fwdYaw);
+      if (wantReverse && Math.abs(wrapAngle(desired - t.yaw)) > 1.9) { reverse = true; desired += Math.PI; }
+      const diff = wrapAngle(desired - t.yaw);
       turn = clamp(diff * 2.2, -1, 1) + avoid;
       throttle = reverse ? -1 : Math.abs(diff) > 1.3 ? 0.15 : Math.abs(diff) > 0.6 ? 0.6 : 1;
       if (this.goalKind === 'fight' && Math.hypot(steerX, steerZ) < 6 && !this.charging) throttle *= 0.4;
     }
     turn = clamp(turn, -1, 1);
-
-    // stuck detection & recovery
     if (Math.abs(throttle) > 0.4 && Math.abs(t.speed) < 1.2) this.stuckT += dt; else this.stuckT = Math.max(0, this.stuckT - dt);
     if (this.stuckT > 1.0) { this.unstickT = 0.9 + Math.random() * 0.6; this.unstickTurn = Math.random() < 0.5 ? 1 : -1; this.stuckT = 0; this.path = null; }
-    if (this.unstickT > 0) {
-      this.unstickT -= dt;
-      throttle = -Math.sign(throttle || 1);
-      turn = this.unstickTurn;
-    }
+    if (this.unstickT > 0) { this.unstickT -= dt; throttle = -Math.sign(throttle || 1); turn = this.unstickTurn; }
     c.throttle = throttle;
     c.turn = turn;
 
+    // ---- smoke when hurt and under fire ----
+    this.smokeT -= dt;
+    if (t.smokeAmmo > 0 && this.smokeT <= 0 && t.hp / t.maxHp < 0.4 && g.time - t.lastHitT < 1.5 && Math.random() < this.d.smoke) {
+      c.smoke = (c.smoke || 0) + 1;
+      this.smokeT = 8;
+    }
+
     // ---- aiming & firing ----
     c.fire = false;
-    const e = this.target;
     this.errT -= dt;
     if (this.errT <= 0) {
       this.errT = 0.4 + Math.random() * 0.6;
       this.errYaw = (Math.random() - 0.5) * 2 * this.d.aimErr;
       this.errPitch = (Math.random() - 0.5) * this.d.aimErr * 0.5;
     }
-    if (e) {
-      const dx = e.x - t.x, dz = e.z - t.z, dist = Math.hypot(dx, dz);
-      const los = !g.world.segmentBlocked(t.x, t.y + 2, t.z, e.x, e.y + 1.4, e.z);
-      if (this.thinkT === 0.35 || !c.weapon) c.weapon = this.chooseWeapon(dist, los) || t.weapons[0].id;
-      const W = WEAPONS[c.weapon];
-      const v = W.speed || 200;
-      // mortars use the fast flat arc when they can see the target, the high arc only to drop over cover
-      // sticky arc choice so the slow-elevating barrel isn't flip-flopping between solutions
-      if (this.arcT === undefined || g.time > this.arcT) { this.highArc = !los; this.arcT = g.time + 2.5; }
-      const highArc = W.kind === 'lob' && this.highArc;
-      let tFlight = dist / v;
-      if (W.kind === 'lob' || W.kind === 'shell') {
-        // flight time from the solved launch angle (a high mortar arc is slow!)
-        const p0 = ballisticPitch(v, W.gravity, dist, 0, highArc);
-        tFlight = dist / (v * Math.max(0.15, Math.cos(p0)));
-      }
-      // estimate how hard the target is turning; straight-line leads are useless against circling tanks
-      const hd = Math.atan2(e.vx, e.vz);
-      const turnRate = this.prevHd !== undefined && this.prevTarget === e ? Math.abs(wrapAngle(hd - this.prevHd)) / Math.max(dt, 1e-3) : 0;
-      this.prevHd = hd; this.prevTarget = e;
-      this.turnEst = (this.turnEst || 0) * 0.9 + turnRate * 0.1;
-      let lead = W.kind === 'rail' || W.kind === 'rocket' ? 0 : this.d.lead;
-      lead *= clamp(1 - this.turnEst * tFlight * 0.35, 0.2, 1);
-      let lx = e.vx * tFlight * lead, lz = e.vz * tFlight * lead;
-      const ll = Math.hypot(lx, lz), cap = tFlight > 2.5 ? 14 : 60; // long lobs: don't over-commit to a guess
-      if (ll > cap) { lx *= cap / ll; lz *= cap / ll; }
-      const px = e.x + lx, pz = e.z + lz;
-      const pdx = px - t.x, pdz = pz - t.z, pd = Math.hypot(pdx, pdz);
-      const muzzleY = t.muzzle[1];
-      const ty = g.world.heightAt(px, pz) + 1.2;
-      c.aimYaw = Math.atan2(pdx, pdz) + this.errYaw;
-      let pitch;
-      if (W.kind === 'lob') {
-        pitch = ballisticPitch(v, W.gravity, pd, ty - muzzleY, highArc);
-        if (pitch > t.def.pitchMax || pitch < t.def.pitchMin) pitch = ballisticPitch(v, W.gravity, pd, ty - muzzleY, !highArc);
-      }
-      else if (W.kind === 'shell') pitch = ballisticPitch(v, W.gravity, pd, ty - muzzleY, false);
-      else pitch = Math.atan2(ty - muzzleY, pd);
-      c.aimPitch = clamp(pitch + this.errPitch, t.def.pitchMin, t.def.pitchMax);
-      const yawErr = Math.abs(wrapAngle(t.turretYaw - c.aimYaw));
-      const tol = Math.max(0.03, Math.atan2(2.2, dist)) * this.d.fireTol;
-      const ready = g.time - this.targetSince > this.d.react;
-      const range = W.range || (W.kind === 'lob' ? (W.speed * W.speed) / W.gravity * 0.95 : 160);
-      const pitchErr = Math.abs(t.pitch - c.aimPitch);
-      const pitchOk = pitchErr < (W.kind === 'lob' || W.kind === 'shell' ? 0.025 : 0.08);
-      if (ready && pitchOk && yawErr < tol + Math.abs(this.errYaw) && dist < range && (los || W.kind === 'lob') && e.alive) c.fire = true;
-      if (W.kind === 'lob' && dist < 18) c.fire = false;
-      // a 5-second high arc only makes sense against slow targets; otherwise hold fire and wait for a clear shot
-      if (highArc && Math.hypot(e.vx, e.vz) > 5) c.fire = false;
-      // mines: drop them when being chased
-      const mine = t.weapons.find((w) => w.id === 'mines' && w.ammo > 0);
-      if (mine && dist < 22) {
-        const behind = Math.abs(wrapAngle(Math.atan2(dx, dz) - (t.yaw + Math.PI))) < 0.8;
-        if (behind && Math.random() < dt * 1.5) c.dropMine = true;
-      }
-    } else {
-      // scan ahead lazily when idle
+    const e = this.target;
+    if (!e) {
       c.aimYaw = t.yaw + Math.sin(g.time * 0.5 + t.id) * 0.6;
       c.aimPitch = clamp(0.05, t.def.pitchMin, t.def.pitchMax);
-      if (!c.weapon) c.weapon = t.weapons[0].id;
+      c.lock = -1;
+      return;
     }
-    return c;
+    const dx = e.x - t.x, dz = e.z - t.z, dist = Math.hypot(dx, dz);
+    const los = g.los(t, e);
+    if (thinking || !this.weapon || !t.weapons.find((w) => w.id === this.weapon && w.ammo > 0)) this.weapon = this.chooseWeapon(dist, los, e) || t.weapons[0].id;
+    c.weapon = this.weapon;
+    const W = WEAPONS[this.weapon];
+    const gun = this.weapon === 'standard' ? t.def.gun.speed || 1 : 1;
+    const v = (W.speed || 100) * gun;
+    if (this.arcT === undefined || g.time > this.arcT) { this.highArc = !los; this.arcT = g.time + 2.5; }
+    const lobbed = W.kind === 'seeker' || W.kind === 'strike';
+    const highArc = (W.kind === 'shell' || W.kind === 'cluster') && this.highArc && t.def.pitchMax > 1;
+    let tFlight = dist / v;
+    if (lobbed) tFlight = (2 * seekerSpeed(dist, W.gravity, W.launchPitch) * Math.sin(W.launchPitch)) / W.gravity;
+    else if (W.gravity) { const p0 = ballisticPitch(v, W.gravity, dist, 0, highArc); tFlight = dist / (v * Math.max(0.15, Math.cos(p0))); }
+    const hd = Math.atan2(e.vx, e.vz);
+    const turnRate = this.prevHd !== undefined && this.prevTarget === e ? Math.abs(wrapAngle(hd - this.prevHd)) / Math.max(dt, 1e-3) : 0;
+    this.prevHd = hd; this.prevTarget = e;
+    this.turnEst = (this.turnEst || 0) * 0.9 + turnRate * 0.1;
+    let lead = this.d.lead * clamp(1 - this.turnEst * tFlight * 0.35, 0.2, 1);
+    if (W.kind === 'strike') lead = 0; // the zone is big; aim where they are
+    let lx = e.vx * tFlight * lead, lz = e.vz * tFlight * lead;
+    const ll = Math.hypot(lx, lz), cap = tFlight > 2.5 ? 14 : 60;
+    if (ll > cap) { lx *= cap / ll; lz *= cap / ll; }
+    const px = e.x + lx, pz = e.z + lz, pd = Math.hypot(px - t.x, pz - t.z);
+    const muzzleY = t.muzzle[1];
+    const ty = g.world.heightAt(px, pz) + 1.2;
+    c.aimYaw = Math.atan2(px - t.x, pz - t.z) + this.errYaw;
+    c.aimDist = pd * (1 + this.errPitch);
+    let pitch;
+    if (lobbed) pitch = W.launchPitch;
+    else if (W.gravity) {
+      pitch = ballisticPitch(v, W.gravity, pd, ty - muzzleY, highArc);
+      if (pitch > t.def.pitchMax || pitch < t.def.pitchMin) pitch = ballisticPitch(v, W.gravity, pd, ty - muzzleY, !highArc);
+    } else pitch = Math.atan2(ty - muzzleY, pd);
+    c.aimPitch = clamp(pitch + (lobbed ? 0 : this.errPitch), t.def.pitchMin, t.def.pitchMax);
+    // seeker lock: like a commander keeping the target in the reticle
+    const yawErr = Math.abs(wrapAngle(t.turretYaw - c.aimYaw));
+    if (W.kind === 'seeker' && los && yawErr < 0.15 && g.lockValid(t, e, 0.3)) this.lockT += dt; else this.lockT = Math.max(0, this.lockT - dt);
+    c.lock = W.kind === 'seeker' && this.lockT >= W.lockTime * this.d.lockMul ? e.id : -1;
+    const tol = Math.max(0.03, Math.atan2(2.2, dist)) * this.d.fireTol * (W.kind === 'strike' ? 4 : 1);
+    const ready = g.time - this.targetSince > this.d.react;
+    const range = W.range || (W.gravity ? ((v * v) / W.gravity) * 0.95 : 160);
+    const pitchOk = lobbed || Math.abs(t.pitch - c.aimPitch) < (W.gravity > 8 ? 0.025 : 0.08);
+    const canHit = los || lobbed || W.kind === 'cluster' || highArc;
+    if (ready && pitchOk && yawErr < tol + Math.abs(this.errYaw) && dist < range && canHit && e.alive) c.fire = true;
+    if (W.kind === 'seeker' && los && c.lock < 0 && this.lockT > 0) c.fire = false; // a lock is coming: wait for it
+    if ((W.kind === 'cluster' || highArc || W.id === 'massive') && dist < 28) c.fire = false;
+    if (highArc && Math.hypot(e.vx, e.vz) > 5) c.fire = false;
+    if (W.kind === 'flame' && t.heat > 3) c.fire = false; // bots respect the fuel risk (mostly)
+    // rapid fire in bursts: let the spread settle before the next burst
+    if (W.kind === 'bullet') {
+      if (t.bloom > 0.035 + this.d.aimErr * 0.6) this.burstRest = true;
+      if (this.burstRest && t.bloom < 0.012) this.burstRest = false;
+      if (this.burstRest) c.fire = false;
+    }
   }
 
   /** Probe ahead for obstacles / water and return a turn correction. */

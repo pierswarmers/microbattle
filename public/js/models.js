@@ -11,14 +11,7 @@ const HUB = [0.85, 0.75, 0.3, 0];
 const METAL = [0.28, 0.29, 0.32, 0];
 const LIGHT = [1, 0.95, 0.6, 0];
 
-/** Turret / barrel mount points per tank type (in tank-local units before type scale). */
-export const TANK_GEOM = {
-  hornet: { turretY: 1.2, barrelY: 0.28, barrelZ: 0.45, barrelLen: 1.9, sightY: 0.75 },
-  trooper: { turretY: 1.45, barrelY: 0.32, barrelZ: 0.8, barrelLen: 2.7, sightY: 0.95 },
-  bulldog: { turretY: 1.7, barrelY: 0.4, barrelZ: 1.0, barrelLen: 3.1, sightY: 1.1 },
-  thumper: { turretY: 1.4, barrelY: 0.45, barrelZ: 0.1, barrelLen: 2.0, sightY: 1.2 },
-  longshot: { turretY: 1.25, barrelY: 0.25, barrelZ: 0.6, barrelLen: 4.4, sightY: 0.8 },
-};
+export { TANK_GEOM } from './defs.js';
 
 function tracks(g, w, len, h, y = 0) {
   for (const sx of [-1, 1]) {
@@ -45,7 +38,7 @@ function headlights(g, w, y, z) {
 
 function buildTank(type) {
   const hull = new Geo(), turret = new Geo(), barrel = new Geo();
-  if (type === 'hornet') {
+  if (type === 'scout') {
     tracks(hull, 2.0, 3.0, 0.75);
     hull.hull(0, 0.95, 0, 1.9, 0.5, 3.1, 0.55, 0.3, PAINT, PAINT);
     hull.box(0, 1.22, -1.1, 1.3, 0.12, 0.5, PAINT2);
@@ -59,7 +52,7 @@ function buildTank(type) {
       barrel.cyl(sx, 0, 1.6, 0.1, 0.1, 0.3, 6, METAL, 'z');
     }
     barrel.box(0, 0, 0.2, 0.42, 0.22, 0.4, PAINT3);
-  } else if (type === 'trooper') {
+  } else if (type === 'standard') {
     tracks(hull, 2.4, 3.7, 0.85);
     hull.hull(0, 1.1, 0, 2.3, 0.6, 3.8, 0.7, 0.35, PAINT, PAINT);
     hull.box(0, 1.15, 0, 3.0, 0.1, 3.4, PAINT2);
@@ -72,7 +65,7 @@ function buildTank(type) {
     barrel.cyl(0, 0, 0, 0.15, 0.13, 2.7, 8, METAL, 'z');
     barrel.cyl(0, 0, 2.3, 0.2, 0.2, 0.4, 8, METAL, 'z');
     barrel.cyl(0, 0, 0, 0.28, 0.24, 0.5, 8, PAINT3, 'z');
-  } else if (type === 'bulldog') {
+  } else if (type === 'superheavy') {
     tracks(hull, 2.9, 4.2, 1.0);
     hull.hull(0, 1.3, 0, 2.7, 0.75, 4.3, 0.8, 0.4, PAINT, PAINT);
     for (const sx of [-1, 1]) hull.box(sx * 1.47, 0.95, 0, 0.12, 0.55, 3.9, PAINT2);
@@ -88,7 +81,7 @@ function buildTank(type) {
     barrel.cyl(0, 0, 0, 0.24, 0.2, 3.1, 8, METAL, 'z');
     barrel.box(0, 0, 3.0, 0.62, 0.32, 0.5, METAL);
     barrel.cyl(0, 0, 0, 0.42, 0.36, 0.7, 8, PAINT3, 'z');
-  } else if (type === 'thumper') {
+  } else if (type === 'artillery') {
     tracks(hull, 2.6, 3.9, 0.85);
     hull.hull(0, 1.1, 0, 2.5, 0.6, 4.0, 0.5, 0.2, PAINT, PAINT);
     hull.box(0, 1.45, 1.3, 1.6, 0.2, 0.8, PAINT2);
@@ -394,11 +387,43 @@ function mineMesh() {
   return g;
 }
 
+function bombMesh() {
+  const g = new Geo();
+  g.cyl(0, 0, -0.9, 0.35, 0.35, 1.4, 8, [0.3, 0.38, 0.25, 0], 'z');
+  g.cyl(0, 0, 0.5, 0.35, 0.05, 0.6, 8, [0.3, 0.38, 0.25, 0], 'z');
+  g.cyl(0, 0, -0.3, 0.37, 0.37, 0.15, 8, [1, 0.85, 0.1, 0], 'z');
+  for (let i = 0; i < 4; i++) { g.setT(T(0, 0, 0, 0, 0, (i * Math.PI) / 2)); g.box(0, 0.3, -0.9, 0.04, 0.4, 0.4, [0.25, 0.3, 0.2, 0]); g.setT(null); }
+  return g;
+}
+
+function nukeMesh() {
+  const g = new Geo();
+  g.sphere(0, 0, 0, 0.7, 1, (y) => [1, 0.85, 0.1, 0], 0, Math.random, 1);
+  g.cyl(0, 0, -0.2, 0.72, 0.72, 0.25, 10, [0.12, 0.12, 0.12, 0], 'z');
+  g.cyl(0, 0, -1.2, 0.3, 0.55, 0.6, 8, [0.12, 0.12, 0.12, 0], 'z');
+  for (let i = 0; i < 4; i++) { g.setT(T(0, 0, 0, 0, 0, (i * Math.PI) / 2)); g.box(0, 0.45, -1.1, 0.05, 0.5, 0.5, [1, 0.85, 0.1, 0]); g.setT(null); }
+  return g;
+}
+
+function jetMesh() {
+  const g = new Geo();
+  const body = [0.55, 0.6, 0.68, 0], dark = [0.3, 0.33, 0.38, 0], glass = [0.4, 0.75, 1, 0];
+  g.cyl(0, 0, -3, 0.6, 0.45, 5.5, 8, body, 'z');
+  g.cyl(0, 0, 2.5, 0.45, 0.05, 1.6, 8, body, 'z');
+  g.sphere(0, 0.45, 1.6, 0.45, 1, glass, 0, Math.random, 0.8);
+  g.box(0, -0.05, -0.3, 7, 0.12, 1.8, body, 0.1);
+  g.box(0, 0.9, -2.7, 0.12, 1.6, 1.0, dark);
+  g.box(0, 0.1, -2.8, 2.6, 0.1, 0.8, body);
+  for (const x of [-1.6, 1.6]) g.cyl(x, -0.35, -0.5, 0.18, 0.18, 0.9, 6, dark, 'z');
+  g.box(0, -0.35, 0.2, 0.15, 0.3, 0.6, [1, 0.25, 0.2, 0]);
+  return g;
+}
+
 /** Create every mesh. Returns a dictionary of Mesh instances. */
 export function createModels(r, rng) {
   const M = {};
   M.tanks = {};
-  for (const type of Object.keys(TANK_GEOM)) {
+  for (const type of ['scout', 'standard', 'artillery', 'superheavy']) {
     const t = buildTank(type);
     M.tanks[type] = {
       hull: new Mesh(r, t.hull, { capacity: 8 }),
@@ -428,7 +453,7 @@ export function createModels(r, rng) {
   M.windmill = new Mesh(r, windmillTower(), { static: true, capacity: 4 });
   M.blades = new Mesh(r, windmillBlades(), { capacity: 4, cull: false });
   M.fence = new Mesh(r, fence(), { static: true, capacity: 128 });
-  M.cloud = new Mesh(r, cloud(rng), { capacity: 32, castShadow: false });
+  M.cloud = new Mesh(r, cloud(rng), { capacity: 32, castShadow: false, mode: 1 }); // flat cartoon clouds
   M.cloudGhost = new Mesh(r, cloud(rng), { capacity: 16, transparent: true, castShadow: false, layer: 9, mode: 1 });
   M.bird = new Mesh(r, bird(), { capacity: 64, castShadow: false });
   M.wing = new Mesh(r, wing(), { capacity: 128, cull: false, castShadow: false });
@@ -442,6 +467,9 @@ export function createModels(r, rng) {
   M.chute = new Mesh(r, parachute(), { capacity: 8, cull: false });
   M.rocket = new Mesh(r, rocketMesh(), { capacity: 64 });
   M.mine = new Mesh(r, mineMesh(), { capacity: 64 });
+  M.bomb = new Mesh(r, bombMesh(), { capacity: 64 });
+  M.nukeShell = new Mesh(r, nukeMesh(), { capacity: 8 });
+  M.jet = new Mesh(r, jetMesh(), { capacity: 8 });
 
   const unitSphere = new Geo().sphere(0, 0, 0, 1, 1, [1, 1, 1, 1]);
   const lowSphere = new Geo().sphere(0, 0, 0, 1, 0, [1, 1, 1, 1]);
