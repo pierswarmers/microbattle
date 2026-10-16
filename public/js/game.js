@@ -135,7 +135,9 @@ export class Game {
     t.alive = true;
     t.invulnT = initial ? 0 : 2.5;
     t.burnT = 0;
-    t.pitch = t.aimPitch = clamp(0.05, t.def.pitchMin, t.def.pitchMax);
+    t.pitchMem = {};
+    const lob = WEAPONS[t.def.weapons[0]].kind === 'lob';
+    t.pitch = t.aimPitch = clamp(lob ? 0.6 : 0.05, t.def.pitchMin, t.def.pitchMax);
     t.weapons = t.def.weapons.map((id) => ({ id, ammo: Math.round(WEAPONS[id].maxAmmo * (initial ? 1 : 0.75)) }));
     t.wi = 0;
     for (const k in t.power) t.power[k] = 0;
@@ -1233,7 +1235,7 @@ export class Game {
     v.listen = [eye[0], eye[2] - (v.kind === 'birds' ? (v.camH || 0) * 0.5 : 0)];
     if (v.kind === 'birds' || v.kind === 'overview' || v.kind === 'lobby' || v.kind === 'winner') {
       v.shadowCenter = [v.focus[0], v.focus[1], v.focus[2] - (v.camH || 60) * 0.1];
-      v.shadowRadius = Math.min(220, (v.camH || 60) * 0.95);
+      v.shadowRadius = Math.min(240, (v.camH || 60) * 1.3); // cover the corners of the tilted view
       v.listen = [v.focus[0], v.focus[2]];
     } else {
       const d = v.tank.alive ? (v.tank.zoom ? 70 : 45) : 20;

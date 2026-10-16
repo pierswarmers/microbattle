@@ -118,6 +118,8 @@ void main() {
   float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0);
   col += vCol.rgb * rim * 0.18;
   float alpha = vCol.a;
+  // smoke right in front of the camera fades out instead of filling the gunner's sight
+  if (alpha < 0.999) alpha *= smoothstep(1.5, 7.0, length(uCamPos - vWorld));
   if (uMode == 2) {
     vec3 h = normalize(uSunDir + v);
     float spec = pow(max(dot(n, h), 0.0), 60.0);
@@ -386,6 +388,10 @@ export class Renderer {
       lv[13] = Math.round(lv[13] / texel) * texel;
       m4.ortho(lp, -R, R, -R, R, 20, 420);
       m4.multiply(this.lightVP, lp, lv);
+      // unbind the shadow texture first: sampling it while it is the render target is a feedback loop
+      // (that silently dropped the shadow pass for every view after the first in split-screen)
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, null);
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.shadowFb);
       gl.viewport(0, 0, this.shadowSize, this.shadowSize);
       gl.clear(gl.DEPTH_BUFFER_BIT);
