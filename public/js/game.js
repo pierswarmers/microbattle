@@ -283,7 +283,8 @@ export class Game {
   // ---------------- controls ----------------
   humanControls(t, dt) {
     const raw = this.input.player(t.slot);
-    const c = { throttle: raw.throttle, turn: raw.turn, fire: raw.fire, aimYaw: t.aimYaw, aimPitch: t.aimPitch, weaponCycle: raw.cycle };
+    if (raw.cycle) this.cycleWeapon(t);
+    const c = { throttle: raw.throttle, turn: raw.turn, fire: raw.fire, aimYaw: t.aimYaw, aimPitch: t.aimPitch, weaponCycle: false };
     const def = t.def;
     const commander = this.cfg.mode === 'commander';
     const ms = this.input.mouse;
@@ -324,7 +325,7 @@ export class Game {
         }
         if (ms.buttons & 1) c.fire = true;
       }
-      if (ms.wheel) { c.weaponCycle = true; ms.wheel = 0; }
+      if (ms.wheel) { this.cycleWeapon(t); c.aimPitch = t.aimPitch; ms.wheel = 0; }
     }
     t.zoom = raw.zoom;
     // keep aim close to the actual turret so keyboard traverse doesn't wind up
@@ -398,10 +399,17 @@ export class Game {
 
   cycleWeapon(t) {
     t.cooldown = Math.min(t.cooldown, 0.25); // each gun has its own loader: a quick swap is ready almost at once
+    // each weapon remembers its own barrel elevation (mortar high, MG flat)
+    t.pitchMem = t.pitchMem || {};
+    t.pitchMem[t.weapons[t.wi].id] = t.aimPitch;
     for (let k = 1; k <= t.weapons.length; k++) {
       const i = (t.wi + k) % t.weapons.length;
       if (t.weapons[i].ammo > 0 || k === t.weapons.length) { t.wi = i; break; }
     }
+    const nw = WEAPONS[t.weapons[t.wi].id];
+    const mem = t.pitchMem[nw.id];
+    t.aimPitch = clamp(mem !== undefined ? mem : nw.kind === 'lob' ? 0.6 : 0.03, t.def.pitchMin, t.def.pitchMax);
+    t.pendingPitch = t.aimPitch;
     if (t.human) this.sound.play('switch', 0.5);
   }
 
@@ -1195,7 +1203,7 @@ export class Game {
       } else {
         st.yaw = t.turretYaw + Math.PI;
         // gunner's sight sits just past the muzzle so the tank's own barrel never blocks the view
-        const px = t.muzzle[0] + t.dir[0] * 0.3, py = t.muzzle[1] + 0.35 * t.scale, pz = t.muzzle[2] + t.dir[2] * 0.3;
+        const px = t.muzzle[0] + t.dir[0] * 0.3, py = Math.max(t.muzzle[1] + 0.35 * t.scale, t.y + 2.4), pz = t.muzzle[2] + t.dir[2] * 0.3;
         const W = WEAPONS[t.weapons[t.wi].id];
         let dir = t.dir.slice();
         if (W.kind === 'lob') {

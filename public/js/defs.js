@@ -37,7 +37,7 @@ export const TANK_TYPES = {
   thumper: {
     id: 'thumper', name: 'Thumper', role: 'Artillery', blurb: 'Lobs mortars over cover. Keep away!',
     hp: 105, speed: 14, reverse: 10, accel: 18, turn: 1.8, turret: 1.9, pitchSpeed: 0.9,
-    pitchMin: 0.0, pitchMax: 1.45, radius: 1.9, mass: 1.1, armor: 1.0,
+    pitchMin: -0.06, pitchMax: 1.45, radius: 1.9, mass: 1.1, armor: 1.0,
     weapons: ['mortar', 'mg'], zoom: 2.0, scale: 1.0,
   },
   longshot: {

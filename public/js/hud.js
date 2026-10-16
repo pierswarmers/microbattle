@@ -41,8 +41,13 @@ export class HUD {
       ctx.beginPath(); ctx.rect(v.x, v.y, v.w, v.h); ctx.clip();
       this.drawWorldLabels(v);
       if (v.kind === 'commander') this.drawScope(v);
-      if (v.kind === 'overview') this.label(v.x + v.w / 2, v.y + 22, 'BATTLEFIELD OVERVIEW', 14, '#fff', 'center');
-      if (v.tank && (v.kind === 'commander' || views.length > 1 || g.cfg.split)) this.drawPanel(v.tank, v.x + 12, v.y + v.h - 12, 'bl', v);
+      if (v.kind === 'overview') this.label(v.x + v.w / 2, v.y + v.h - 16, 'BATTLEFIELD OVERVIEW', 13, '#fff', 'center');
+      if (v.tank && (v.kind === 'commander' || views.length > 1 || g.cfg.split)) {
+        const k = v.h < 420 ? 0.72 : 1; // quarter views get a smaller panel
+        ctx.save(); ctx.translate(v.x + 12, v.y + v.h - 12); ctx.scale(k, k);
+        this.drawPanel(v.tank, 0, 0, 'bl', v);
+        ctx.restore();
+      }
       if (v.tank && v.kind === 'commander') this.drawMinimap(v.x + v.w - 12, v.y + v.h - 12, Math.min(150, v.w * (views.length > 1 ? 0.15 : 0.22)), v.tank);
       if (v.tank && !v.tank.alive) this.drawDeadNotice(v);
       ctx.restore();
@@ -312,7 +317,7 @@ export class HUD {
   // ---------- player panel ----------
   drawPanel(t, x, y, corner, v) {
     const ctx = this.ctx;
-    if (v && v.h < 420 && !t.human) {
+    if (v && v.h < 420 && !t.human && v.kind !== 'commander') {
       // compact badge for spectator quadrants so tanks stay visible
       const w = 170, px = x, py = y - 34;
       this.roundRect(px, py, w, 30, 10, 'rgba(15,20,35,0.6)', t.css);
