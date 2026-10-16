@@ -477,8 +477,9 @@ export function createModels(r, rng) {
   const zBox = new Geo().box(0, 0, 0.5, 1, 1, 1, [1, 1, 1, 1]);
   M.shell = new Mesh(r, new Geo().sphere(0, 0, 0, 1, 1, [0.25, 0.25, 0.25, 1], 0, rng, 1), { capacity: 64 });
   M.chunk = new Mesh(r, unitBox, { capacity: 256 });
-  M.puff = new Mesh(r, unitSphere, { capacity: 1024, transparent: true, castShadow: false, layer: 5 });
-  M.fire = new Mesh(r, unitSphere, { capacity: 1024, transparent: true, mode: 3, castShadow: false, layer: 5 });
+  M.puff = new Mesh(r, new Geo().sphere(0, 0, 0, 1, 2, [1, 1, 1, 1]), { capacity: 1536, transparent: true, castShadow: false, layer: 4, mode: 4 });
+  const smoothSphere = new Geo().sphere(0, 0, 0, 1, 2, [1, 1, 1, 1]);
+  M.fire = new Mesh(r, smoothSphere, { capacity: 1024, transparent: true, mode: 3, castShadow: false, layer: 5 });
   M.glow = new Mesh(r, lowSphere, { capacity: 1024, transparent: true, additive: true, mode: 1, castShadow: false, layer: 6 });
   M.spark = new Mesh(r, zBox, { capacity: 1024, transparent: true, additive: true, mode: 1, castShadow: false, layer: 6 });
   M.beam = new Mesh(r, zBox, { capacity: 32, transparent: true, additive: true, mode: 1, castShadow: false, layer: 7 });

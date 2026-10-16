@@ -6,7 +6,6 @@ export const OPTIONS = {
   mode: ['any', 'enum', "Camera: birdseye (high overview), commander (gunner's sight), chase (behind the turret), or any (players switch with C)", ['any', 'birdseye', 'commander', 'chase']],
   players: [0, 'int', 'Start automatically once this many players have joined (0 = wait for someone to press Start)'],
   bots: ['auto', 'intOrAuto', "Bot count, or 'auto' to fill up to 4 tanks"],
-  tanks: ['', 'list', `Tank types for P1..P4, comma separated (${TANK_ORDER.join(', ')})`],
   botTanks: ['', 'list', 'Tank types for bots, comma separated (random if empty)'],
   difficulty: ['normal', 'enum', 'Bot skill', ['easy', 'normal', 'hard']],
   mapSize: [360, 'int', 'Map edge length in metres (200-700)'],

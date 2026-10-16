@@ -59,44 +59,56 @@ export class FX {
     }
     this.add({ k: 'shock', x, y: Math.max(ground, y - 0.5) + 0.25, z, life: 0.45, s0: 0.6 * s, s1: 9 * s, c0: [1, 0.85, 0.5], a: 0.8 });
     if (y - ground < 2.5) this.scorch(x, z, 2.2 * s);
-    if (opts.text || (s >= 1.6 && R() < 0.85) || R() < 0.12) this.popText(x, y + 3 * s, z, opts.text || BOOM_WORDS[Math.floor(R() * BOOM_WORDS.length)], 1 + s * 0.35);
+    if (!opts.noText && (opts.text || (s >= 1.6 && R() < 0.85) || R() < 0.12)) this.popText(x, y + 3 * s, z, opts.text || BOOM_WORDS[Math.floor(R() * BOOM_WORDS.length)], 1 + s * 0.35);
   }
 
-  /** MASSIVE: blinding flash, fireball, rising stem and a mushroom cap that spreads and lingers. */
+  /** MASSIVE: blinding flash, rolling fireball, a solid rising stem and a mushroom cap that cools to smoke. */
   nuke(x, y, z) {
     const R = Math.random;
     const g = this.world.heightAt(x, z);
-    this.add({ k: 'glow', x, y: g + 4, z, vx: 0, vy: 0, vz: 0, life: 0.35, s0: 14, s1: 34, c0: [1, 1, 0.95], c1: [1, 0.8, 0.4], a: 1 });
-    for (let i = 0; i < 14; i++) {
-      const a = R() * Math.PI * 2, sp = 2 + R() * 4;
-      this.add({ k: 'fire', x: x + Math.cos(a) * 3, y: g + 3 + R() * 4, z: z + Math.sin(a) * 3, vx: Math.cos(a) * sp, vy: 4 + R() * 4, vz: Math.sin(a) * sp, drag: 1.5, rise: 3, life: 1.6 + R(), s0: 5, s1: 11 + R() * 4, c0: [1, 0.95, 0.5], c1: [0.9, 0.25, 0.05], a: 1 });
+    this.add({ k: 'glow', x, y: g + 6, z, vx: 0, vy: 0, vz: 0, life: 0.4, s0: 16, s1: 40, c0: [1, 1, 0.95], c1: [1, 0.85, 0.5], a: 1 });
+    // fireball at the base
+    for (let i = 0; i < 16; i++) {
+      const a = R() * Math.PI * 2, sp = 3 + R() * 5;
+      this.add({ k: 'fire', x: x + Math.cos(a) * 3, y: g + 3 + R() * 4, z: z + Math.sin(a) * 3, vx: Math.cos(a) * sp, vy: 3 + R() * 4, vz: Math.sin(a) * sp, drag: 1.4, rise: 2, life: 2.2 + R() * 0.8, s0: 6, s1: 10 + R() * 4, c0: [1, 1, 0.75], c1: [0.9, 0.3, 0.08], a: 1 });
     }
-    // stem: a column of fire turning to smoke as it climbs
-    for (let i = 0; i < 34; i++) {
-      const fire = i < 18;
-      this.add({ k: fire ? 'fire' : 'puff', x: x + (R() - 0.5) * 3, y: g + 2, z: z + (R() - 0.5) * 3, vx: (R() - 0.5) * 1.2, vy: 14 + R() * 6, vz: (R() - 0.5) * 1.2, drag: 0.55, life: 3.2 + R() * 1.5,
-        s0: 3.5, s1: 6 + R() * 2, c0: fire ? [1, 0.75, 0.25] : [0.55, 0.45, 0.4], c1: fire ? [0.55, 0.22, 0.1] : [0.8, 0.78, 0.75], a: 0.95, delay: i * 0.05 });
+    // stem: a solid column of fire puffs climbing to the cap
+    for (let i = 0; i < 42; i++) {
+      const h = (i / 42) * 30;
+      this.add({ k: 'fire', x: x + (R() - 0.5) * 3, y: g + 2 + h * 0.3, z: z + (R() - 0.5) * 3, vx: (R() - 0.5) * 0.6, vy: 9 + h * 0.15, vz: (R() - 0.5) * 0.6, drag: 0.6, life: 3.4 + R() * 0.8,
+        s0: 3.8 - h * 0.03, s1: 4.8 - h * 0.04, c0: [1, 0.92 - h * 0.012, 0.55 - h * 0.012], c1: [0.75, 0.25, 0.08], a: 1, delay: i * 0.025 });
     }
-    // cap: rolling ring of cloud at the top of the stem
-    for (let i = 0; i < 40; i++) {
-      const a = (i / 40) * Math.PI * 2, sp = 3 + R() * 4, h = 30 + R() * 8;
-      const hot = i % 3 === 0;
-      this.add({ k: hot ? 'fire' : 'puff', x: x + Math.cos(a) * 4, y: g + h, z: z + Math.sin(a) * 4, vx: Math.cos(a) * sp, vy: 1 + R() * 2, vz: Math.sin(a) * sp, drag: 0.4, life: 5 + R() * 3,
-        s0: 5, s1: 13 + R() * 5, c0: hot ? [1, 0.6, 0.2] : [0.7, 0.55, 0.45], c1: hot ? [0.5, 0.3, 0.25] : [0.86, 0.84, 0.82], a: 0.9, delay: 1.1 + R() * 0.6 });
+    // cap: rings of puffs rolling outward, hot inside and cooler at the edge
+    for (let ring = 0; ring < 3; ring++) {
+      const n = 14 + ring * 6;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + ring * 0.3, rr = 3 + ring * 4, sp = 2.5 + ring * 1.5;
+        const hot = ring === 0;
+        this.add({ k: 'fire', x: x + Math.cos(a) * rr, y: g + 30 + ring * 1.5 + R() * 2, z: z + Math.sin(a) * rr, vx: Math.cos(a) * sp, vy: 1 + (2 - ring) * 0.8, vz: Math.sin(a) * sp, drag: 0.5, life: 4.2 + R() * 1.2,
+          s0: 4 + ring, s1: 8 + ring * 2 + R() * 2, c0: hot ? [1, 0.95, 0.6] : ring === 1 ? [1, 0.6, 0.2] : [0.85, 0.35, 0.15], c1: [0.55, 0.22, 0.12], a: 1, delay: 0.9 + ring * 0.12 + R() * 0.2 });
+      }
     }
-    // ground shockwaves and a racing dust ring
+    // the cooled cloud lingers as soft smoke once the fire has shrunk away
+    for (let i = 0; i < 26; i++) {
+      const a = R() * Math.PI * 2, rr = R() * 14;
+      this.add({ k: 'puff', x: x + Math.cos(a) * rr, y: g + 30 + R() * 6, z: z + Math.sin(a) * rr, vx: Math.cos(a) * 2, vy: 0.6, vz: Math.sin(a) * 2, drag: 0.3, life: 6 + R() * 2, s0: 7, s1: 13, c0: [0.62, 0.55, 0.52], c1: [0.85, 0.83, 0.82], a: 0.85, delay: 3.2 + R() * 0.6 });
+    }
+    for (let i = 0; i < 12; i++) this.add({ k: 'puff', x: x + (R() - 0.5) * 3, y: g + 4 + i * 2.3, z: z + (R() - 0.5) * 3, vx: 0, vy: 0.8, vz: 0, life: 5 + R(), s0: 3.5, s1: 5, c0: [0.6, 0.55, 0.52], c1: [0.82, 0.8, 0.78], a: 0.8, delay: 3 + i * 0.05 });
+    // shockwaves, a low racing dust skirt and debris thrown up in arcs
     this.add({ k: 'shock', x, y: g + 0.4, z, life: 1.3, s0: 4, s1: 90, c0: [1, 0.9, 0.7], a: 1 });
-    this.add({ k: 'shock', x, y: g + 6, z, life: 2.2, s0: 8, s1: 70, c0: [1, 1, 1], a: 0.6, delay: 0.3 });
-    for (let i = 0; i < 46; i++) {
-      const a = (i / 46) * Math.PI * 2, sp = 22 + R() * 14;
-      this.add({ k: 'puff', x: x + Math.cos(a) * 6, y: g + 1, z: z + Math.sin(a) * 6, vx: Math.cos(a) * sp, vy: 1 + R() * 2, vz: Math.sin(a) * sp, drag: 1.4, life: 2.5 + R(), s0: 2.5, s1: 7, c0: [0.75, 0.65, 0.5], c1: [0.85, 0.8, 0.72], a: 0.75 });
+    this.add({ k: 'shock', x, y: g + 0.6, z, life: 1.8, s0: 3, s1: 60, c0: [1, 0.6, 0.3], a: 0.9, delay: 0.15 });
+    this.add({ k: 'shock', x, y: g + 31, z, life: 1.6, s0: 6, s1: 36, c0: [1, 1, 1], a: 0.7, delay: 1.0 });
+    for (let i = 0; i < 36; i++) {
+      const a = (i / 36) * Math.PI * 2, sp = 24 + R() * 12;
+      this.add({ k: 'puff', x: x + Math.cos(a) * 6, y: g + 0.8, z: z + Math.sin(a) * 6, vx: Math.cos(a) * sp, vy: 0.5, vz: Math.sin(a) * sp, drag: 1.6, life: 2 + R(), s0: 1.8, s1: 4, c0: [0.8, 0.7, 0.55], c1: [0.88, 0.84, 0.76], a: 0.7 });
     }
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 34; i++) {
       const a = R() * Math.PI * 2, sp = 10 + R() * 22;
       this.add({ k: 'chunk', x, y: g + 2, z, vx: Math.cos(a) * sp, vy: 14 + R() * 20, vz: Math.sin(a) * sp, grav: 26, life: 3 + R(), s0: 0.4 + R() * 0.6, rx: R() * 6, ry: R() * 6, wx: (R() - 0.5) * 18, wy: (R() - 0.5) * 18, c0: [0.4, 0.3, 0.2], bounce: true });
+      if (i % 3 === 0) this.add({ k: 'spark', x, y: g + 2, z, vx: Math.cos(a) * sp, vy: 16 + R() * 18, vz: Math.sin(a) * sp, grav: 22, life: 1.4, w: 0.25, len: 2, c0: [1, 0.9, 0.5], c1: [1, 0.3, 0.05], a: 1 });
     }
     this.scorch(x, z, 18);
-    this.popText(x, g + 20, z, 'KA-BOOOOM!', 2.6, '#ffdd33', true);
+    this.popText(x, g + 22, z, 'KA-BOOOOM!', 2.6, '#ffdd33', true);
   }
 
   /** Cluster shell pops open: bright pop and a fan of glittering sparks. */
@@ -196,7 +208,9 @@ export class FX {
 
   flame(x, y, z, vx, vy, vz) {
     const R = Math.random;
-    this.add({ k: 'glow', x, y, z, vx, vy, vz, drag: 1.2, rise: 2.5, life: 0.5 + R() * 0.15, s0: 0.35, s1: 2.2, c0: [1, 0.95, 0.5], c1: [0.9, 0.15, 0.02], a: 0.9 });
+    // a licking tongue of fire: small hot core growing into an orange-red billow, plus the odd ember
+    this.add({ k: 'fire', x, y, z, vx: vx * (0.9 + R() * 0.2), vy, vz: vz * (0.9 + R() * 0.2), drag: 1.4, rise: 3, life: 0.45 + R() * 0.2, s0: 0.25, s1: 1.4 + R() * 0.9, c0: [1, 0.9, 0.45], c1: [0.85, 0.18, 0.03], a: 1 });
+    if (R() < 0.25) this.add({ k: 'spark', x, y, z, vx: vx * 0.8 + (R() - 0.5) * 4, vy: vy + 2 + R() * 3, vz: vz * 0.8 + (R() - 0.5) * 4, grav: 4, life: 0.6 + R() * 0.4, w: 0.06, len: 0.3, c0: [1, 0.8, 0.3], c1: [1, 0.3, 0.05], a: 1 });
   }
 
   scorch(x, z, r) {
@@ -257,8 +271,9 @@ export class FX {
         const s = lerp(p.s0, p.s1, Math.sqrt(t));
         const c0 = p.c0, c1 = p.c1;
         const r = lerp(c0[0], c1[0], t), g = lerp(c0[1], c1[1], t), b = lerp(c0[2], c1[2], t);
-        const a = p.a * (p.k === 'puff' ? 1 - t : p.k === 'fire' ? (t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3) : 1 - t * t);
-        const sc = p.k === 'fire' && t > 0.75 ? s * (1 - (t - 0.75) * 2) : s;
+        const a = p.a * (p.k === 'puff' ? 1 - t * t : p.k === 'fire' ? 1 : 1 - t * t);
+        // fire stays solid and shrinks away at the end instead of going see-through
+        const sc = p.k === 'fire' && t > 0.6 ? s * Math.max(0, 1 - (t - 0.6) / 0.4) : s;
         m4.compose(m, p.x, p.y, p.z, p.age * 2, p.age, 0, sc);
         (p.k === 'glow' ? M.glow : p.k === 'fire' ? M.fire : M.puff).add(m, r, g, b, a);
       } else if (p.k === 'spark') {

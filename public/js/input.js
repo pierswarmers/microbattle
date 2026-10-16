@@ -8,13 +8,13 @@
 export const CONTROLS_HELP = [
   ['W A S D', 'drive'],
   ['← →', 'turn turret'],
-  ['↑ ↓', 'barrel up / down (range for seekers & strikes)'],
+  ['↑ ↓', 'barrel up/down · range for seeker & strike'],
   ['Space', 'fire'],
   ['Q / E', 'previous / next weapon  (1-8 direct)'],
   ['C', 'change view'],
   ['V', 'zoom (commander view)'],
   ['G', 'smoke grenade'],
-  ['Mouse', 'aim · click fire · right-click zoom · wheel zoom (bird\'s-eye)'],
+  ['Mouse', 'aim · click fire · right-click / wheel zoom'],
   ['M', 'mute'],
 ];
 

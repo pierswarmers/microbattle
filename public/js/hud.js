@@ -154,7 +154,7 @@ export class HUD {
       const a = tx.age / tx.life;
       const pop = a < 0.15 ? 0.4 + (a / 0.15) * 0.9 : a < 0.25 ? 1.3 - ((a - 0.15) / 0.1) * 0.3 : 1;
       const base = tx.small ? 16 : 34;
-      const size = base * tx.scale * pop * (birds ? clamp(120 / (v.camH || 120), 0.6, 1.3) : clamp(50 / p.w, 0.5, 1.6));
+      const size = base * tx.scale * pop * (birds ? clamp(120 / (v.camH || 120), 0.6, 1.3) : clamp(50 / p.w, 0.45, 1.15));
       ctx.save();
       ctx.globalAlpha = a > 0.7 ? 1 - (a - 0.7) / 0.3 : 1;
       ctx.translate(p.x, p.y); ctx.rotate(tx.rot);
@@ -245,11 +245,11 @@ export class HUD {
       ctx.beginPath(); for (const [a, b] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) { ctx.moveTo(cx + a * 10, cy + b * 10); ctx.lineTo(cx + a * 22, cy + b * 22); } ctx.stroke();
     }
     const lobbed = W.kind === 'seeker' || W.kind === 'strike';
-    const range = lobbed ? (g.lock.id >= 0 ? g.lockDist : g.aim.range) : g.rangeAlongGun(me);
+    const range = lobbed ? (g.lock.id >= 0 ? g.lockDist : g.aim.range) : v.impact ? Math.hypot(v.impact[0] - me.x, v.impact[2] - me.z) : g.rangeAlongGun(me);
     this.label(cx + 50, cy + 22, range ? `RNG ${Math.round(range)}m` : 'RNG ---', 13, '#bfffd0', 'left');
     this.label(cx + 50, cy + 40, lobbed ? 'RANGE ↑↓' : `ELV ${(me.p * 57.3).toFixed(1)}°`, 12, '#bfffd0', 'left');
     if (g.zoomed) this.label(cx + 50, cy - 22, `ZOOM ${me.def.zoom}x`, 13, '#ffe08a', 'left');
-    if (W.kind === 'seeker' && g.lock.cand < 0) this.label(cx, cy + R * 0.78, 'hold a tank inside the circle to lock on', 12, '#ffe08a', 'center');
+    if (W.kind === 'seeker' && g.lock.cand < 0) this.label(cx, cy + R * 0.78, g.lock.reason || 'hold a tank inside the circle to lock on', g.lock.reason ? 14 : 12, g.lock.reason ? '#ff8a6a' : '#ffe08a', 'center');
     const heading = ((-me.ty * 180) / Math.PI + 180 + 3600) % 360;
     const tapeW = Math.min(v.w * 0.5, 360), tx = cx - tapeW / 2, ty = 76;
     this.roundRect(tx, ty - 12, tapeW, 26, 6, 'rgba(0,0,0,0.5)');
@@ -470,13 +470,13 @@ export class HUD {
 
   controlsCard(cx, cy, k = 1) {
     const rows = CONTROLS_HELP;
-    const w = 600 * k, lh = 20 * k, h = Math.ceil(rows.length / 2) * lh + 20 * k;
+    const w = 800 * k, lh = 20 * k, h = Math.ceil(rows.length / 2) * lh + 20 * k;
     this.roundRect(cx - w / 2, cy - h / 2, w, h, 12, 'rgba(10,15,30,0.7)');
     rows.forEach(([key, what], i) => {
       const col = i % 2, row = Math.floor(i / 2);
       const x = cx - w / 2 + 14 * k + col * (w / 2), y = cy - h / 2 + 18 * k + row * lh;
       this.label(x, y, key, 12 * k, '#ffdd33', 'left');
-      this.label(x + 68 * k, y, what, 11 * k, '#e8eeff', 'left');
+      this.label(x + 76 * k, y, what, 11 * k, '#e8eeff', 'left');
     });
   }
 

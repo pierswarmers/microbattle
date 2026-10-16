@@ -30,9 +30,9 @@ export const TANK_TYPES = {
   },
   artillery: {
     id: 'artillery', name: 'Artillery', role: 'Long-range lobber', blurb: 'High-arc gun, cluster, seekers, air strike.',
-    hp: 128, speed: 14.5, reverse: 10, accel: 18, turn: 1.8, turret: 1.9, pitchSpeed: 0.9,
+    hp: 135, speed: 14.5, reverse: 10, accel: 18, turn: 1.8, turret: 1.9, pitchSpeed: 0.9,
     pitchMin: -0.06, pitchMax: 1.3, radius: 1.9, mass: 1.1, armor: 1.0, smoke: 2,
-    weapons: ['standard', 'cluster', 'seeker', 'strike'], zoom: 2.5, scale: 1.0, gun: { dmg: 1.35, reload: 1.1, speed: 1.15 }, bonus: { cluster: 2, strike: 1, seeker: 2 },
+    weapons: ['standard', 'cluster', 'seeker', 'strike'], zoom: 2.5, scale: 1.0, gun: { dmg: 1.35, reload: 1.1, speed: 1.15 }, bonus: { cluster: 1, strike: 1, seeker: 2 },
   },
   superheavy: {
     id: 'superheavy', name: 'Super Heavy', role: 'Armoured brawler', blurb: 'Huge gun, flamer, rams, MASSIVE.',
@@ -54,13 +54,13 @@ export const TANK_ORDER = ['scout', 'standard', 'artillery', 'superheavy'];
  * start: ammo on spawn; maxAmmo: cap (pickups can't exceed it).
  */
 export const WEAPONS = {
-  standard: { id: 'standard', name: 'Standard', short: 'STD', key: '1', kind: 'shell', dmg: 24, splash: 3.5, splashDmg: 10, speed: 85, gravity: 14, reload: 1.1, maxAmmo: 40, start: 40, spread: 0.006, recoil: 0.5, shake: 0.2, color: [1, 0.9, 0.5] },
+  standard: { id: 'standard', name: 'Standard', short: 'STD', key: '1', kind: 'shell', dmg: 24, splash: 3.5, splashDmg: 10, speed: 100, gravity: 14, reload: 1.1, maxAmmo: 40, start: 40, spread: 0.006, recoil: 0.5, shake: 0.2, color: [1, 0.9, 0.5] },
   highvel: { id: 'highvel', name: 'High Velocity', short: 'HV', key: '2', kind: 'shell', hv: true, dmg: 52, splash: 2.5, splashDmg: 12, speed: 290, gravity: 3, reload: 2.8, maxAmmo: 10, start: 8, spread: 0.001, recoil: 1.0, shake: 0.55, knock: 9, selfKnock: 5, color: [0.7, 0.95, 1] },
   seeker: { id: 'seeker', name: 'Heat Seeker', short: 'SEEK', key: '3', kind: 'seeker', dmg: 38, splash: 5, splashDmg: 16, speed: 48, gravity: 18, launchPitch: 1.0, homing: 5, reload: 2.4, maxAmmo: 6, start: 4, lockTime: 0.7, range: 200, minRange: 22, recoil: 0.3, shake: 0.15, color: [1, 0.5, 0.2] },
-  massive: { id: 'massive', name: 'MASSIVE', short: 'NUKE', key: '4', kind: 'shell', nuke: true, dmg: 130, splash: 22, splashDmg: 95, speed: 62, gravity: 16, reload: 6, maxAmmo: 1, start: 1, spread: 0.004, recoil: 1.2, shake: 0.6, size: 2.2, color: [1, 0.85, 0.2] },
-  cluster: { id: 'cluster', name: 'Cluster', short: 'CLSTR', key: '5', kind: 'cluster', dmg: 18, splash: 3, splashDmg: 8, speed: 72, gravity: 18, reload: 3.0, maxAmmo: 4, start: 3, spread: 0.004, recoil: 0.6, shake: 0.25, bomblets: 12, bombletSplash: 4.5, bombletDmg: 21, burstHeight: 12, spreadR: 10, color: [1, 0.6, 0.9] },
-  flame: { id: 'flame', name: 'Flamethrower', short: 'FLAME', key: '6', kind: 'flame', dmg: 2.6, speed: 30, reload: 0.045, maxAmmo: 200, start: 200, spread: 0.14, range: 17, burn: 2.5, burnDps: 8, recoil: 0, shake: 0.02, color: [1, 0.55, 0.1] },
-  rapid: { id: 'rapid', name: 'Rapid Fire', short: 'RAPID', key: '7', kind: 'bullet', dmg: 5, speed: 150, gravity: 6, reload: 0.07, maxAmmo: 300, start: 300, spread: 0.012, bloom: 0.009, maxBloom: 0.1, recover: 0.3, kick: 0.012, range: 130, recoil: 0.06, shake: 0.03, color: [1, 1, 0.5] },
+  massive: { id: 'massive', name: 'MASSIVE', short: 'NUKE', key: '4', kind: 'shell', nuke: true, dmg: 130, splash: 22, splashDmg: 110, speed: 62, gravity: 16, reload: 6, maxAmmo: 1, start: 1, spread: 0.004, recoil: 1.2, shake: 0.6, size: 2.2, color: [1, 0.85, 0.2] },
+  cluster: { id: 'cluster', name: 'Cluster', short: 'CLSTR', key: '5', kind: 'cluster', dmg: 18, splash: 3, splashDmg: 8, speed: 72, gravity: 18, reload: 3.0, maxAmmo: 4, start: 3, spread: 0.004, recoil: 0.6, shake: 0.25, bomblets: 12, bombletSplash: 4.5, bombletDmg: 16, burstHeight: 12, spreadR: 10, color: [1, 0.6, 0.9] },
+  flame: { id: 'flame', name: 'Flamethrower', short: 'FLAME', key: '6', kind: 'flame', dmg: 3.0, speed: 32, reload: 0.045, maxAmmo: 200, start: 200, spread: 0.14, range: 20, burn: 2.5, burnDps: 8, recoil: 0, shake: 0.02, color: [1, 0.55, 0.1] },
+  rapid: { id: 'rapid', name: 'Rapid Fire', short: 'RAPID', key: '7', kind: 'bullet', dmg: 4.2, speed: 150, gravity: 6, reload: 0.07, maxAmmo: 300, start: 300, spread: 0.012, bloom: 0.009, maxBloom: 0.1, recover: 0.3, kick: 0.012, range: 130, recoil: 0.06, shake: 0.03, color: [1, 1, 0.5] },
   strike: { id: 'strike', name: 'Air Strike', short: 'STRIKE', key: '8', kind: 'strike', speed: 60, gravity: 20, launchPitch: 0.8, reload: 1, cooldown: 20, maxAmmo: 2, start: 1, radius: 34, delay: 5, bombs: 40, bombSplash: 9, bombDmg: 75, range: 220, minRange: 15, recoil: 0.2, shake: 0.1, color: [1, 0.2, 0.2] },
 };
 export const WEAPON_ORDER = ['standard', 'highvel', 'seeker', 'massive', 'cluster', 'flame', 'rapid', 'strike'];

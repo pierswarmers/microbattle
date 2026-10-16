@@ -14,7 +14,7 @@ import { m4, clamp, lerp, wrapAngle, approachAngle, makeRng, alignToNormal, dirF
 
 export const VIEWS = ['chase', 'commander', 'birdseye'];
 export const VIEW_NAMES = { chase: 'CHASE CAM', commander: 'COMMANDER', birdseye: "BIRD'S-EYE" };
-const INTERP = 0.08; // seconds of interpolation delay for remote tanks
+const INTERP = 0.1; // seconds of interpolation delay for remote tanks (3 snapshots)
 const FUN_NAMES = ['Tankzilla', 'Sir Boom', 'Major Mayhem', 'Captain Crunch', 'Rusty', 'Lil Treads', 'Big Bertha', 'Turret Tom', 'Boomer', 'Pebbles'];
 
 export class Client {
@@ -37,6 +37,7 @@ export class Client {
     this.strikes = [];
     this.smokes = [];
     this.jets = [];
+    this.laters = [];
     this.debris = [];
     this.killfeed = [];
     this.announce = [];
@@ -107,6 +108,10 @@ export class Client {
     this.state = s.state;
     this.serverTime = s.time;
     this.serverRecv = now;
+    // smoothed clock: server time ≈ local time + offset; arrival jitter only nudges it
+    const off = s.time - now;
+    if (this.clockOff === undefined || Math.abs(off - this.clockOff) > 0.25) this.clockOff = off;
+    else this.clockOff += (off - this.clockOff) * 0.04;
     this.snap = s;
     if (s.state === 'countdown' && prevState !== 'countdown') this.onMatchStart();
     // tanks
@@ -159,14 +164,11 @@ export class Client {
   }
 
   /** Interpolated state of tank t for rendering. */
-  sample(t, now) {
+  sample(t, now, dt) {
     const own = t.id === this.you;
-    const serverNow = this.serverTime + (now - this.serverRecv);
-    if (own) {
-      // own tank: newest data, nudged forward by its velocity so driving feels immediate
-      const e = t.net, dtE = clamp(serverNow - this.serverTime, 0, 0.1);
-      return { x: e.x + e.vx * dtE, y: e.y, z: e.z + e.vz * dtE, yaw: e.yaw + 0, ty: e.ty, p: e.p };
-    }
+    const serverNow = now + this.clockOff;
+    if (own && t.net.al) return this.predictHull(t, now, dt);
+    if (own) { const e = t.net; this.hull = null; return { x: e.x, y: e.y, z: e.z, yaw: e.yaw, ty: e.ty, p: e.p }; }
     const rt = serverNow - INTERP;
     let a = null, b = null;
     for (let i = this.snaps.length - 1; i >= 0; i--) {
@@ -178,6 +180,34 @@ export class Client {
     if (!ea) return t.net;
     const k = b && b.time > a.time ? clamp((rt - a.time) / (b.time - a.time), 0, 1) : 0;
     return { x: lerp(ea.x, eb.x, k), y: lerp(ea.y, eb.y, k), z: lerp(ea.z, eb.z, k), yaw: ea.yaw + wrapAngle(eb.yaw - ea.yaw) * k, ty: ea.ty + wrapAngle(eb.ty - ea.ty) * k, p: lerp(ea.p, eb.p, k) };
+  }
+
+  /**
+   * Own tank: driven locally from my inputs (same acceleration / turn model as the server) so it responds
+   * instantly, and pulled gently toward the authoritative state so collisions and knockback still win.
+   */
+  predictHull(t, now, dt) {
+    const e = t.net, def = t.def, c = this.ctl || { throttle: 0, turn: 0 };
+    const age = clamp(now - this.serverRecv, 0, 0.15) + 0.02;
+    const sx = e.x + e.vx * age, sz = e.z + e.vz * age;
+    let h = this.hull;
+    if (!h || Math.hypot(h.x - sx, h.z - sz) > 6) h = this.hull = { x: sx, z: sz, yaw: e.yaw, speed: e.spd };
+    const sp = e.pw && e.pw.speed ? 1.55 : 1;
+    const target = c.throttle > 0 ? c.throttle * def.speed * sp : c.throttle * def.reverse * sp;
+    const accel = (Math.sign(target) !== Math.sign(h.speed) && Math.abs(h.speed) > 0.5 ? 2.2 : 1) * def.accel * (c.throttle === 0 ? 0.8 : 1);
+    h.speed += clamp(target - h.speed, -accel * dt, accel * dt);
+    const turnMul = 1 - Math.min(Math.abs(h.speed) / (def.speed * 2.5), 0.3);
+    h.yaw = wrapAngle(h.yaw + c.turn * def.turn * turnMul * dt);
+    h.x += Math.sin(h.yaw) * h.speed * dt; h.z += Math.cos(h.yaw) * h.speed * dt;
+    // correction toward the server (blocked by a rock? the server says so and we ease back)
+    const err = Math.hypot(sx - h.x, sz - h.z);
+    const k = Math.min(1, dt * (4 + err * 3));
+    h.x += (sx - h.x) * k; h.z += (sz - h.z) * k;
+    h.yaw = wrapAngle(h.yaw + wrapAngle(e.yaw - h.yaw) * k);
+    // if the server says we're actually stopped (rock, tank, water), stop predicting motion quickly
+    const real = Math.hypot(e.vx, e.vz) * Math.sign(h.speed || 1);
+    h.speed += (real - h.speed) * Math.min(1, dt * (Math.abs(real - h.speed) > 4 ? 8 : 1));
+    return { x: h.x, y: lerp(t.y ?? e.y, this.world.heightAt(h.x, h.z), Math.min(1, dt * 12)), z: h.z, yaw: h.yaw, ty: e.ty, p: e.p };
   }
 
   // ---------------- events → effects ----------------
@@ -196,7 +226,8 @@ export class Client {
         const off = own && this.view === 'commander' ? 2.2 : 0;
         if (W.kind === 'flame') { for (let i = 0; i < 3; i++) fx.flame(mx, my, mz, dx * 28 + (Math.random() - 0.5) * 4, dy * 28 + 1, dz * 28 + (Math.random() - 0.5) * 4); at(mx, mz, 0.6, 'flame'); break; }
         const size = W.hv ? 1.6 : W.nuke ? 2 : W.kind === 'shell' ? 1.2 * (t.def.gun.dmg) : W.kind === 'cluster' ? 1.1 : W.kind === 'bullet' ? 0.35 : 0.7;
-        fx.muzzle(mx + dx * off, my + dy * off, mz + dz * off, dx, dy, dz, off ? size * 0.6 : size, W.color, !off);
+        if (!off) fx.muzzle(mx, my, mz, dx, dy, dz, size, W.color, true);
+        else if (W.kind !== 'bullet') fx.add({ k: 'shock', x: mx + dx * 6, y: my + dy * 6, z: mz + dz * 6, life: 0.15, s0: 0.5, s1: 3, c0: W.color, a: 0.6 });
         t.recoil = Math.min(1, t.recoil + W.recoil);
         if (W.hv) {
           t.rock = 1;
@@ -209,7 +240,7 @@ export class Client {
       }
       case 'boom': {
         if (e.c === 'cluster' && e.s < 0.8) { fx.bomblet(e.x, e.y, e.z); at(e.x, e.z, 0.8, 'bomblet'); this.shakeAt(e.x, e.z, 0.12); break; }
-        fx.explode(e.x, e.y, e.z, e.s, e.c === 'strike' ? { text: Math.random() < 0.2 ? 'KA-BLAM!' : undefined } : {});
+        fx.explode(e.x, e.y, e.z, e.s, e.c === 'strike' ? { noText: true } : {});
         at(e.x, e.z, Math.min(1.3, 0.6 + e.s * 0.3), e.c === 'strike' ? 'bomb' : 'explosion', { size: e.s });
         this.shakeAt(e.x, e.z, 0.25 * e.s + 0.1);
         break;
@@ -282,14 +313,15 @@ export class Client {
       case 'strike': {
         this.sound.play('siren', 0.55);
         const by = this.tanks.get(e.by);
-        this.announce.push({ text: 'AIR STRIKE INBOUND!', t: 0, col: '#ff4a3a' });
+        this.pushAnnounce('AIR STRIKE INBOUND!', '#ff4a3a');
         fx.add({ k: 'shock', x: e.x, y: this.world.heightAt(e.x, e.z) + 0.3, z: e.z, life: 0.8, s0: 2, s1: e.r, c0: [1, 0.25, 0.2], a: 1 });
         if (by) fx.popText(e.x, this.world.heightAt(e.x, e.z) + 8, e.z, 'TARGET MARKED', 1, '#ff5a4a', true);
         break;
       }
       case 'strikeRun': {
-        for (let i = -1; i <= 1; i += 2) this.jets.push({ x: e.x - e.dx * 160 + -e.dz * i * 9, z: e.z - e.dz * 160 + e.dx * i * 9, y: this.world.heightAt(e.x, e.z) + 32 + i, dx: e.dx, dz: e.dz, age: 0 });
+        for (let i = -1; i <= 1; i += 2) this.jets.push({ x: e.x - e.dx * 130 + -e.dz * i * 10, z: e.z - e.dz * 130 + e.dx * i * 10, y: this.world.heightAt(e.x, e.z) + 22 + i * 1.5, dx: e.dx, dz: e.dz, age: 0 });
         this.sound.play('jet', Math.max(0.3, this.spatial(e.x, e.z)[0]));
+        this.later(1.1, () => fx.popText(e.x, this.world.heightAt(e.x, e.z) + 10, e.z, 'CARPET BOMB!', 1.8, '#ff5a3a', true));
         break;
       }
       case 'ignite': {
@@ -301,7 +333,7 @@ export class Client {
         if (t) t.flashT = 0.2;
         break;
       }
-      case 'announce': this.announce.push({ text: e.text, t: 0, col: e.col }); if (e.drop) this.sound.play('drop', 0.6); break;
+      case 'announce': this.pushAnnounce(e.text, e.col); if (e.drop) this.sound.play('drop', 0.6); break;
       case 'landed': for (let k = 0; k < 6; k++) fx.dust(e.x, this.world.heightAt(e.x, e.z), e.z, 1); fx.add({ k: 'shock', x: e.x, y: this.world.heightAt(e.x, e.z) + 0.3, z: e.z, life: 0.6, s0: 1, s1: 6, c0: [1, 0.9, 0.5], a: 0.8 }); at(e.x, e.z, 0.6, 'crate'); break;
       case 'locked': if (e.target === this.you) { this.incoming = 3; this.sound.play('locked', 0.7); } break;
       case 'empty': if (e.id === this.you) this.sound.play('empty', 0.5); break;
@@ -317,6 +349,14 @@ export class Client {
         for (const o of this.world.obstacles) o.alive = true;
         break;
     }
+  }
+
+  later(t, fn) { this.laters.push({ t, fn }); }
+
+  /** Big centre-screen message; identical ones within 1.5 s are merged. */
+  pushAnnounce(text, col) {
+    if (this.announce.some((a) => a.text === text && a.t < 1.5)) return;
+    this.announce.push({ text, t: 0, col });
   }
 
   fireworks(x, y, z, first) {
@@ -408,6 +448,7 @@ export class Client {
       if (this.view === 'birdseye') I.releaseLock();
     }
     if (this.view === 'birdseye' && ms.wheel) this.zoomH = clamp(this.zoomH * (1 + ms.wheel * 0.1), 50, 260);
+    this.ctl = this.state === 'play' ? c : { throttle: 0, turn: 0 };
     if (!me || !me.net.al || this.state === 'over') { this.sendInput({ th: 0, tu: 0, f: false }); return; }
     const def = me.def, e = me.net;
     // weapon selection
@@ -506,17 +547,20 @@ export class Client {
     if (W.kind !== 'seeker' || this.view !== 'commander' || !this.cam || !this.cam.vp) { L.cand = -1; L.t = 0; L.id = -1; return; }
     const me = this.me;
     let best = -1, bd = 1e9;
+    L.reason = '';
     for (const t of this.tanks.values()) {
       if (t === me || !t.net.al || t.net.pw.ghost) continue;
-      const d = Math.hypot(t.x - me.x, t.z - me.z);
-      if (d > W.range || d < 10) continue;
       const p = m4.transform(this.cam.vp, t.x, t.y + 1.2, t.z, 1);
       if (p[3] <= 0) continue;
       const sx = p[0] / p[3], sy = p[1] / p[3];
       const r = Math.hypot(sx * (this.cam.w / this.cam.h), sy);
       if (r > 0.12) continue;
-      if (this.smokes.some((s) => segCircle(me.x, me.z, t.x, t.z, s.x, s.z, s.r * 0.85))) continue;
-      if (this.world.segmentBlocked(me.x, me.y + 2, me.z, t.x, t.y + 1.5, t.z)) continue;
+      // a tank is in the circle: say why we can't lock it, if we can't
+      const d = Math.hypot(t.x - me.x, t.z - me.z);
+      if (d > W.range) { L.reason = `OUT OF RANGE (${Math.round(d)}m > ${W.range}m)`; continue; }
+      if (d < 10) { L.reason = 'TOO CLOSE'; continue; }
+      if (this.smokes.some((s) => segCircle(me.x, me.z, t.x, t.z, s.x, s.z, s.r * 0.85))) { L.reason = 'TARGET IN SMOKE'; continue; }
+      if (this.world.segmentBlocked(me.x, me.y + 2, me.z, t.x, t.y + 1.5, t.z)) { L.reason = 'NO LINE OF SIGHT'; continue; }
       if (r < bd) { bd = r; best = t.id; }
     }
     if (best !== L.cand) { L.cand = best; L.t = 0; L.id = -1; }
@@ -574,7 +618,7 @@ export class Client {
     this.announce = this.announce.filter((a) => a.t < 2.2);
     if (this.state === 'over') this.overT = (this.overT || 0) + dt;
     for (const t of this.tanks.values()) {
-      const s = this.sample(t, now);
+      const s = this.sample(t, now, dt);
       const ox = t.x, oz = t.z;
       Object.assign(t, s);
       if (t.id === this.you && t.net.al) { t.ty = this.pred.yaw; t.p = this.pred.pitch; }
@@ -631,7 +675,14 @@ export class Client {
     }
     // air strike target markers billow red smoke
     for (const s of this.strikes) if (s.t > 0 && Math.random() < dt * 12) fx.add({ k: 'puff', x: s.x + (Math.random() - 0.5), y: W.heightAt(s.x, s.z) + 0.5, z: s.z + (Math.random() - 0.5), vx: (Math.random() - 0.5), vy: 4 + Math.random() * 2, vz: (Math.random() - 0.5), drag: 0.3, life: 2.5, s0: 0.8, s1: 3.5, c0: [1, 0.25, 0.2], c1: [0.9, 0.6, 0.55], a: 0.85 });
-    for (const j of this.jets) { j.age += dt; j.x += j.dx * 120 * dt; j.z += j.dz * 120 * dt; if (Math.random() < 0.8) fx.smokeTrail(j.x - j.dx * 4, j.y, j.z - j.dz * 4, 0.5, 0.95); }
+    for (const j of this.jets) {
+      j.age += dt; j.x += j.dx * 110 * dt; j.z += j.dz * 110 * dt;
+      // twin white contrails that linger
+      for (const side of [-1, 1]) fx.add({ k: 'puff', x: j.x - j.dx * 7 - j.dz * side * 5, y: j.y - 0.4, z: j.z - j.dz * 7 + j.dx * side * 5, vx: 0, vy: 0, vz: 0, life: 2.2, s0: 0.5, s1: 1.6, c0: [1, 1, 1], c1: [0.95, 0.95, 0.95], a: 0.8 });
+    }
+    for (const l of this.laters) l.t -= dt;
+    for (const l of this.laters.filter((q) => q.t <= 0)) l.fn();
+    this.laters = this.laters.filter((q) => q.t > 0);
     this.jets = this.jets.filter((j) => j.age < 3);
     for (let i = this.debris.length - 1; i >= 0; i--) {
       const d = this.debris[i];
@@ -700,13 +751,13 @@ export class Client {
       st.init = true;
       eye = [st.fx + sx * 3, st.fy + st.h + sy * 3, st.fz + st.h * 0.45 + sz * 3];
       at = [st.fx + sx * 2, st.fy, st.fz - st.h * 0.02];
-      fov = 45; fog = 0.0007;
+      fov = 45; fog = 0.00045;
       v.focus = [st.fx, st.fy, st.fz]; v.camH = st.h;
     } else if (this.view === 'chase') {
       // slightly elevated behind the tank, locked to the turret direction
       const yaw = this.pred.yaw;
       const fx = Math.sin(yaw), fz = Math.cos(yaw);
-      const back = 13 * me.scale, up = 4.2 * me.scale;
+      const back = 13 * me.scale, up = 4.8 * me.scale;
       let ex = me.x - fx * back, ez = me.z - fz * back;
       let ey = me.y + up;
       ey = Math.max(ey, this.world.heightAt(ex, ez) + 2);
@@ -819,7 +870,7 @@ export class Client {
         alignToNormal(m, t.x, t.y + 0.12, t.z, t.n, 0, t.radius * 1.5, 1, t.radius * 1.5);
         M.teamRing.add(m, t.color[0], t.color[1], t.color[2], 0.75);
         // a beacon over every tank in the high bird's-eye view so the small tanks are easy to spot
-        if (v.kind === 'birdseye') { m4.compose(m, t.x, t.y, t.z, 0, 0, 0, 1.2, 9, 1.2); M.beacon.add(m, t.color[0] * 0.5, t.color[1] * 0.5, t.color[2] * 0.5, 1); }
+        if (v.kind === 'birdseye') { m4.compose(m, t.x, t.y, t.z, 0, 0, 0, 1.2, 9, 1.2); M.beacon.add(m, t.color[0] * 0.5, t.color[1] * 0.5, t.color[2] * 0.5, 0.95); }
         if (n.sh > 0 || n.inv > 0) {
           m4.compose(m, t.x, t.y + 1.2, t.z, this.time, 0, 0, t.radius * 1.9, t.radius * 1.4, t.radius * 1.9);
           const c = n.sh > 0 ? [0.4, 0.55, 1] : [1, 1, 1];
@@ -845,7 +896,7 @@ export class Client {
       else if (p.kind === 'bomblet') { m4.compose(m, p.x, p.y, p.z, this.time * 5, 0, 0, 0.3); M.shell.add(m, 1.8, 0.5, 1.2); }
       else if (p.kind === 'flare') M.glow.add(m4.compose(m, p.x, p.y, p.z, 0, 0, 0, 0.5), 1, 0.25, 0.2, 1);
     }
-    for (const j of this.jets) M.jet.add(m4.compose(m, j.x, j.y, j.z, Math.atan2(j.dx, j.dz), 0, Math.sin(j.age * 3) * 0.1, 1.8));
+    for (const j of this.jets) M.jet.add(m4.compose(m, j.x, j.y, j.z, Math.atan2(j.dx, j.dz), 0, Math.sin(j.age * 3) * 0.1, 2.6));
   }
 
   drawPickups() {
@@ -863,7 +914,7 @@ export class Client {
       alignToNormal(m, p.x, p.y + 0.1, p.z, n, p.spin, 2.2, 1, 2.2);
       M.teamRing.add(m, col[0], col[1], col[2], 0.6 + Math.sin(p.spin * 4) * 0.2);
       m4.compose(m, p.x, p.y + 0.1, p.z, p.spin * 0.5, 0, 0, 1.1, 10 + Math.sin(p.spin * 3) * 1.2, 1.1);
-      M.beacon.add(m, col[0] * 0.4, col[1] * 0.4, col[2] * 0.4, 1);
+      M.beacon.add(m, col[0] * 0.4, col[1] * 0.4, col[2] * 0.4, 0.95);
     }
     for (const d of this.drops) {
       const sw = Math.sin(this.time * 1.5 + d.id) * 0.15;
@@ -886,7 +937,7 @@ export class Client {
       M.teamRing.add(m, 1, 0.3, 0.2, pulse * 0.6);
       M.decal.add(alignToNormal(m, s.x, g + 0.2, s.z, [0, 1, 0], 0, s.r, 1, s.r), 1, 0.1, 0.05, 0.12);
       m4.compose(m, s.x, g, s.z, this.time, 0, 0, 2, 60, 2);
-      M.beacon.add(m, 0.9, 0.12, 0.08, 1);
+      M.beacon.add(m, 0.9, 0.12, 0.08, 0.95);
     }
   }
 

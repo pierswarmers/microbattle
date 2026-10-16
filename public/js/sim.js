@@ -133,7 +133,8 @@ export class Sim {
     t.alive = true;
     t.invulnT = initial ? 0 : 2.5;
     t.burnT = 0; t.heat = 0; t.bloom = 0; t.strikeCd = 0;
-    t.weapons = t.def.weapons.map((id) => ({ id, ammo: Math.ceil((WEAPONS[id].start + ((t.def.bonus || {})[id] || 0)) * (initial ? 1 : 0.75)) }));
+    const full = initial || this.matchTime < 5;
+    t.weapons = t.def.weapons.map((id) => ({ id, ammo: Math.ceil((WEAPONS[id].start + ((t.def.bonus || {})[id] || 0)) * (full ? 1 : 0.75)) }));
     if (this.cfg.debug && t.human) t.weapons = WEAPON_ORDER.map((id) => ({ id, ammo: WEAPONS[id].maxAmmo })); // --debug: try every weapon
     t.wi = 0;
     t.smokeAmmo = t.def.smoke;
@@ -157,12 +158,18 @@ export class Sim {
       const wasBot = !t.human;
       this.bots = this.bots.filter((b) => b.t !== t);
       t.human = true; t.name = name;
-      if (wasBot) {
-        // take over the seat with a fresh tank of the player's choice (no death counted)
+      t.input = { ...t.input, throttle: 0, turn: 0, fire: false, lock: -1, aimYaw: t.turretYaw, aimPitch: t.pitch };
+      if (wasBot && t.def.id !== type) {
+        // the player's vehicle replaces the bot's in place: same spot, same health fraction, fresh loadout
+        const frac = t.alive ? t.hp / t.maxHp : 1;
         this.setType(t, type);
-        t.input = { ...t.input, throttle: 0, turn: 0, fire: false, lock: -1 };
-        if (!t.eliminated) this.spawnTank(t);
-      } else if (t.def.id !== type) { if (t.alive) t.nextType = type; else this.setType(t, type); }
+        t.hp = t.maxHp * frac;
+        t.weapons = t.def.weapons.map((id) => ({ id, ammo: Math.ceil(WEAPONS[id].start + ((t.def.bonus || {})[id] || 0)) }));
+        t.wi = 0; t.smokeAmmo = t.def.smoke;
+        if (this.cfg.debug) t.weapons = WEAPON_ORDER.map((id) => ({ id, ammo: WEAPONS[id].maxAmmo }));
+        t.pitch = clamp(t.pitch, t.def.pitchMin, t.def.pitchMax);
+        this.updateMatrices(t);
+      } else if (!wasBot && t.def.id !== type) { if (t.alive) t.nextType = type; else this.setType(t, type); }
     }
     this.emit('announce', { text: `${name} JOINED!`, col: t.css });
     return t;
@@ -279,8 +286,8 @@ export class Sim {
   ignite(t) {
     if (!t.alive || t.burnT > 2) return;
     t.heat = 0;
-    t.burnT = 5; t.burnBy = t; t.burnDps = 11;
-    this.damage(t, 18, t, null, 'fuel');
+    t.burnT = 4; t.burnBy = t; t.burnDps = 7;
+    this.damage(t, 12, t, null, 'fuel');
     this.emit('ignite', { id: t.id, x: r1(t.x), y: r1(t.y), z: r1(t.z) });
     if (t.alive) this.explodeAt(t.x, t.y + 1.5, t.z, t, 0, 4, 10, 0.8, t, 'fuel');
   }
@@ -593,7 +600,7 @@ export class Sim {
       if (p.kind === 'flame') return true;
       if (p.kind === 'flare') { this.markStrike(p); return true; }
       if (hitO.hp) this.damageObstacle(hitO, p.kind === 'bullet' ? p.dmg : p.dmg + (p.splashDmg || 0), p.owner);
-      if (hitO.kind === 'tree') this.emit('leaves', { x: r1(hitO.x), y: r1(Math.min(p.y + 2, hitO.top)), z: r1(hitO.z), n: p.kind === 'bullet' ? 2 : 10, canopy: falling ? 1 : 0 });
+      if (hitO.kind === 'tree') this.emit('leaves', { x: r1(hitO.x), y: r1(Math.min(p.y + 2, hitO.top)), z: r1(hitO.z), n: p.kind === 'bullet' ? 2 : 10, canopy: p.kind === 'seeker' && falling ? 1 : 0 });
       this.detonate(p, null);
       return true;
     }
@@ -699,7 +706,7 @@ export class Sim {
     if (by && by !== t) {
       t.lastHitBy = by; t.lastHitT = this.time;
       by.stats.dmg += a;
-      const bw = by.stats.byWeapon[cause];
+      const bw = by.stats.byWeapon[cause === 'burn' ? 'flame' : cause];
       if (bw) { bw.dmg += a; if (!silent) bw.hits++; }
       if (!silent) by.stats.hits++;
     }

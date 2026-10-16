@@ -88,16 +88,30 @@ float shadowAt(float ndl) {
 }
 
 void main() {
-  if (uMode == 1) { // unlit / emissive
-    outCol = vCol;
+  if (uMode == 1) { // unlit / emissive; translucent ones fade out right in front of the camera
+    float a1 = vCol.a;
+    if (a1 < 0.999) a1 *= smoothstep(3.0, 18.0, length(uCamPos - vWorld));
+    outCol = vec4(vCol.rgb, a1);
     return;
   }
-  if (uMode == 3) { // toon fire: self-lit but still shaded so fireballs read as round puffs
+  if (uMode == 3) { // toon fire: self-lit, bright core fading to a warm rim so fireballs read as round puffs
     vec3 nn = normalize(vNor);
-    float l = max(dot(nn, uSunDir), 0.0);
     vec3 vv = normalize(uCamPos - vWorld);
-    float rim = pow(1.0 - max(dot(nn, vv), 0.0), 2.0);
-    outCol = vec4(vCol.rgb * (0.62 + 0.5 * smoothstep(0.0, 0.7, l)) + vec3(0.25, 0.12, 0.0) * rim, vCol.a);
+    float facing = max(dot(nn, vv), 0.0);
+    float l = max(dot(nn, uSunDir), 0.0);
+    vec3 c = vCol.rgb * (0.75 + 0.35 * smoothstep(0.0, 0.7, l));
+    c = mix(c * 0.8, c * 1.25 + vec3(0.08, 0.06, 0.0), smoothstep(0.2, 0.9, facing));
+    outCol = vec4(c, vCol.a * smoothstep(0.0, 0.25, facing));
+    return;
+  }
+  if (uMode == 4) { // soft cartoon smoke: no hard lighting facets, edges fade out
+    vec3 nn = normalize(vNor);
+    vec3 vv = normalize(uCamPos - vWorld);
+    float facing = max(dot(nn, vv), 0.0);
+    vec3 c = vCol.rgb * (0.86 + 0.14 * (nn.y * 0.5 + 0.5)) + uSunCol * 0.04;
+    float d = length(uCamPos - vWorld);
+    float a = vCol.a * smoothstep(0.0, 0.55, facing) * smoothstep(1.5, 7.0, d);
+    outCol = vec4(mix(c, uFogCol, clamp(1.0 - exp(-pow(d * uFogDensity, 1.6)), 0.0, 1.0)), a);
     return;
   }
   vec3 n = normalize(vNor);

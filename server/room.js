@@ -26,39 +26,59 @@ export class Room {
     }, 4);
   }
 
-  /** Seats 0-3; humans take a free seat, bots fill the rest when the match starts. */
+  /** Seats 0-3. Prefer a seat with no tank at all, then one a bot is driving. */
   freeSeat() {
     const taken = new Set([...this.clients.values()].filter((c) => c.slot >= 0).map((c) => c.slot));
-    return [0, 1, 2, 3].find((s) => !taken.has(s)) ?? -1;
+    const free = [0, 1, 2, 3].filter((s) => !taken.has(s));
+    return free.find((s) => !this.sim.tankById(s)) ?? free[0] ?? -1;
   }
 
   join(ws) {
-    const c = { id: nextClientId++, ws, slot: this.freeSeat(), name: 'Player', type: TANK_ORDER[1], ready: false, view: null };
+    // no seat until the client says hello; silent sockets are dropped
+    const c = { id: nextClientId++, ws, slot: -1, hello: false, name: 'Player', type: TANK_ORDER[1], ready: false };
     this.clients.set(c.id, c);
     ws.on('message', (m) => { try { this.onMessage(c, JSON.parse(m)); } catch (e) { this.log('bad message', e.message); } });
     ws.on('close', () => this.leave(c));
-    if (c.slot < 0) this.log(`client ${c.id} connected as spectator (room full)`);
+    setTimeout(() => { if (!c.hello && this.clients.has(c.id)) ws.close(1008); }, 5000);
+  }
+
+  seat(c) {
+    if (c.slot >= 0) return;
+    c.slot = this.freeSeat();
+    if (c.slot >= 0 && this.sim.state !== 'lobby') this.sim.humanJoin(c.slot, c.name, c.type);
   }
 
   leave(c) {
     this.clients.delete(c.id);
-    this.log(`${c.name} left (seat ${c.slot + 1})`);
-    if (c.slot >= 0 && this.sim.state !== 'lobby') this.sim.humanLeave(c.slot);
+    if (!c.hello) return;
+    this.log(`${c.name} left${c.slot >= 0 ? ` (seat ${c.slot + 1})` : ' (spectator)'}`);
+    if (c.slot >= 0) {
+      if (this.sim.state !== 'lobby') this.sim.humanLeave(c.slot);
+      // promote the longest-waiting spectator into the freed seat
+      const next = [...this.clients.values()].find((q) => q.hello && q.slot < 0);
+      if (next) { this.seat(next); this.send(next, { t: 'welcome', you: next.slot, cfg: this.publicCfg(), dead: this.deadList() }); this.log(`${next.name} moved from spectator to seat ${next.slot + 1}`); }
+    }
     this.broadcastLobby();
   }
+
+  deadList() { return this.sim.world.obstacles.filter((o) => !o.alive).map((o) => o.index); }
 
   onMessage(c, m) {
     switch (m.t) {
       case 'hello':
         c.name = String(m.name || 'Player').replace(/[^\w \-!?.]/g, '').slice(0, 14) || 'Player';
         if (TANK_ORDER.includes(m.type)) c.type = m.type;
-        this.log(`${c.name} joined${c.slot >= 0 ? ` (seat ${c.slot + 1})` : ' as spectator'}`);
-        this.send(c, { t: 'welcome', you: c.slot, cfg: this.publicCfg(), dead: this.sim.world.obstacles.filter((o) => !o.alive).map((o) => o.index) });
-        if (c.slot >= 0 && this.sim.state !== 'lobby') this.sim.humanJoin(c.slot, c.name, c.type);
+        if (!c.hello) {
+          c.hello = true;
+          this.seat(c);
+          this.log(`${c.name} joined${c.slot >= 0 ? ` (seat ${c.slot + 1})` : ' as spectator (room full)'}`);
+        } else if (c.slot >= 0) { const t = this.sim.tankById(c.slot); if (t && t.human) t.name = c.name; }
+        this.send(c, { t: 'welcome', you: c.slot, cfg: this.publicCfg(), dead: this.deadList() });
         this.broadcastLobby();
         this.maybeAutoStart();
         break;
       case 'lobby':
+        if (c.slot < 0) return;
         if (TANK_ORDER.includes(m.type)) {
           c.type = m.type;
           const t = this.sim.tankById(c.slot);
@@ -69,6 +89,7 @@ export class Room {
         this.maybeAutoStart();
         break;
       case 'start':
+        if (c.slot < 0) return; // spectators can't start or restart
         if (this.sim.state === 'lobby') this.start();
         else if (this.sim.state === 'over' && this.overT > 2) this.restart();
         break;
@@ -94,7 +115,7 @@ export class Room {
     return { mode, mapSize, seed, trees, scoreLimit, timeLimit, lives, pickups, powerups, zoom, quality, difficulty, lobby, players };
   }
 
-  humans() { return [...this.clients.values()].filter((c) => c.slot >= 0); }
+  humans() { return [...this.clients.values()].filter((c) => c.hello && c.slot >= 0); }
 
   maybeAutoStart() {
     if (this.sim.state !== 'lobby') return;
@@ -134,12 +155,13 @@ export class Room {
     snap.ev = this.sim.drainEvents();
     snap.lt = this.cfg.lobbyTimeout > 0 && this.sim.state === 'lobby' ? Math.max(0, Math.round(this.lobbyT)) : -1;
     const msg = JSON.stringify(snap);
-    for (const c of this.clients.values()) c.ws.send(msg);
+    // slow clients just miss a snapshot rather than buffering without limit
+    for (const c of this.clients.values()) if (c.hello && !c.ws.congested) c.ws.send(msg);
   }
 
   broadcastLobby() {
-    const msg = JSON.stringify({ t: 'lobby', state: this.sim.state, players: [...this.clients.values()].map((c) => ({ id: c.id, slot: c.slot, name: c.name, type: c.type, ready: c.ready })) });
-    for (const c of this.clients.values()) c.ws.send(msg);
+    const msg = JSON.stringify({ t: 'lobby', state: this.sim.state, players: [...this.clients.values()].filter((c) => c.hello).map((c) => ({ id: c.id, slot: c.slot, name: c.name, type: c.type, ready: c.ready })) });
+    for (const c of this.clients.values()) if (c.hello) c.ws.send(msg);
   }
 
   send(c, m) { c.ws.send(JSON.stringify(m)); }

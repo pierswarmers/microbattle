@@ -36,6 +36,7 @@ export class WebSocketConn extends EventEmitter {
       if (len === 126) { if (this.buf.length < 4) return; len = this.buf.readUInt16BE(2); off = 4; }
       else if (len === 127) { if (this.buf.length < 10) return; len = Number(this.buf.readBigUInt64BE(2)); off = 10; }
       if (len > MAX_MESSAGE) { this.close(1009); return; }
+      if (!masked) { this.close(1002); return; } // clients must mask their frames (RFC 6455 5.1)
       const need = off + (masked ? 4 : 0) + len;
       if (this.buf.length < need) return;
       let payload = this.buf.subarray(off + (masked ? 4 : 0), need);
@@ -57,6 +58,8 @@ export class WebSocketConn extends EventEmitter {
     if (op === 0x1 || op === 0x2) { this.fragOp = op; this.frags = [payload]; }
     else if (op === 0x0) this.frags.push(payload);
     else return;
+    // cap the whole fragmented message, not just each frame
+    if (this.frags.reduce((a, f) => a + f.length, 0) > MAX_MESSAGE) { this.frags = []; this.close(1009); return; }
     if (!fin) return;
     const data = Buffer.concat(this.frags);
     this.frags = [];
@@ -75,6 +78,9 @@ export class WebSocketConn extends EventEmitter {
   }
 
   send(text) { this.sendFrame(0x1, Buffer.from(text, 'utf8')); }
+
+  /** True when the client isn't keeping up; callers skip non-essential messages (snapshots). */
+  get congested() { return this.socket.writableLength > 512 * 1024; }
 
   close(code = 1000) {
     if (!this.open) return;

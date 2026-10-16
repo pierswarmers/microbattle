@@ -12,7 +12,7 @@ const DIFFICULTY = {
 
 /** Preferred engagement distance per vehicle — this is what makes bots play each style. */
 const STYLE = {
-  scout: { range: 18, strafe: 1.0, flee: 0.2 },
+  scout: { range: 14, strafe: 1.0, flee: 0.2 },
   standard: { range: 40, strafe: 0.6, flee: 0.25 },
   artillery: { range: 80, strafe: 0.3, flee: 0.45 },
   superheavy: { range: 8, strafe: 0.15, flee: 0.1 },
@@ -137,16 +137,16 @@ export class Bot {
       if (w.ammo <= 0) continue;
       let s = -100;
       switch (w.id) {
-        case 'flame': s = dist < 15 ? (t.heat < 2.2 ? 90 : -40) : -100; break;
+        case 'flame': s = dist < 18 ? (t.heat < 2.2 ? 92 : -40) : -100; break;
         case 'rapid': s = dist < 70 ? 60 : dist < 110 ? 30 : -50; break;
         case 'standard': s = dist < 130 ? 50 : 20; break;
         case 'highvel': s = dist > 25 && los && e.hp > 30 ? 66 : -20; break;
-        case 'seeker': s = dist > 25 && dist < 190 ? (los ? 62 : 70) : -50; break;
+        case 'seeker': s = dist > 25 && dist < 190 && los ? 64 : 15; break; // only worth it with a lock
         case 'cluster': s = dist > 30 && dist < 150 ? 58 : -40; break;
         case 'massive': s = dist > 45 && dist < 150 && e.hp > 60 ? 100 : -100; break;
         case 'strike': s = t.strikeCd <= 0 && dist > 35 && dist < 200 && Math.hypot(e.vx, e.vz) < 9 ? 95 : -200; break;
       }
-      if (!los && !['seeker', 'cluster', 'strike', 'standard'].includes(w.id)) s -= 60;
+      if (!los && !['cluster', 'strike', 'standard'].includes(w.id)) s -= 60;
       if (!los && w.id === 'standard' && t.def.pitchMax < 1) s -= 60;
       if (s > bestScore) { bestScore = s; best = w.id; }
     }
