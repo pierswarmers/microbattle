@@ -129,8 +129,8 @@ export class FX {
   bomblet(x, y, z) {
     const R = Math.random;
     const c = [[1, 0.45, 0.85], [1, 0.85, 0.3], [0.6, 0.55, 1], [0.4, 1, 0.75]][Math.floor(R() * 4)];
-    this.add({ k: 'fire', x, y: y + 0.4, z, vx: 0, vy: 3, vz: 0, drag: 2, life: 0.4, s0: 1.2, s1: 2.6, c0: [1, 1, 0.8], c1: c, a: 1 });
-    for (let i = 0; i < 4; i++) { const a = R() * 6.28; this.add({ k: 'fire', x, y: y + 0.4, z, vx: Math.cos(a) * 5, vy: 2 + R() * 3, vz: Math.sin(a) * 5, drag: 4, life: 0.35 + R() * 0.2, s0: 0.7, s1: 1.4, c0: [1, 0.9, 0.5], c1: c, a: 1 }); }
+    this.add({ k: 'fire', x, y: y + 0.4, z, vx: 0, vy: 3, vz: 0, drag: 2, life: 0.4, s0: 1.2, s1: 2.6, c0: [1, 1, 0.8], c1: [1, 0.45, 0.1], a: 1 });
+    for (let i = 0; i < 4; i++) { const a = R() * 6.28; this.add({ k: 'fire', x, y: y + 0.4, z, vx: Math.cos(a) * 5, vy: 2 + R() * 3, vz: Math.sin(a) * 5, drag: 4, life: 0.35 + R() * 0.2, s0: 0.7, s1: 1.4, c0: [1, 0.9, 0.5], c1: [0.95, 0.3, 0.08], a: 1 }); }
     for (let i = 0; i < 8; i++) { const a = R() * 6.28, sp = 6 + R() * 8; this.add({ k: 'spark', x, y: y + 0.3, z, vx: Math.cos(a) * sp, vy: 5 + R() * 6, vz: Math.sin(a) * sp, grav: 20, life: 0.35, w: 0.08, len: 0.5, c0: [1, 1, 1], c1: c, a: 1 }); }
     this.add({ k: 'shock', x, y: this.world.heightAt(x, z) + 0.25, z, life: 0.3, s0: 0.5, s1: 5, c0: c, a: 0.8 });
     this.add({ k: 'puff', x, y: y + 0.5, z, vx: 0, vy: 1.5, vz: 0, life: 1.2, s0: 0.7, s1: 2.2, c0: [0.6, 0.6, 0.6], c1: [0.85, 0.85, 0.85], a: 0.55 });

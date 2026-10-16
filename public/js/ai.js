@@ -1,7 +1,7 @@
 // Bot brains: target selection, needs (health/ammo/power-ups), A* navigation, steering, stuck recovery,
 // ballistic aiming with target leading, weapon choice by range, seeker locks, air strikes and smoke.
 // Bots drive their tank through the same input record network players send.
-import { WEAPONS } from './defs.js';
+import { WEAPONS, shotSpeed, shotGravity } from './defs.js';
 import { wrapAngle, clamp } from './math.js';
 
 const DIFFICULTY = {
@@ -14,7 +14,7 @@ const DIFFICULTY = {
 const STYLE = {
   scout: { range: 14, strafe: 1.0, flee: 0.2 },
   standard: { range: 40, strafe: 0.6, flee: 0.25 },
-  artillery: { range: 80, strafe: 0.3, flee: 0.45 },
+  artillery: { range: 85, strafe: 0.3, flee: 0.6 },
   superheavy: { range: 8, strafe: 0.15, flee: 0.1 },
 };
 
@@ -240,14 +240,13 @@ export class Bot {
     if (thinking || !this.weapon || !t.weapons.find((w) => w.id === this.weapon && w.ammo > 0)) this.weapon = this.chooseWeapon(dist, los, e) || t.weapons[0].id;
     c.weapon = this.weapon;
     const W = WEAPONS[this.weapon];
-    const gun = this.weapon === 'standard' ? t.def.gun.speed || 1 : 1;
-    const v = (W.speed || 100) * gun;
+    const v = shotSpeed(t.def, this.weapon), G = shotGravity(t.def, this.weapon);
     if (this.arcT === undefined || g.time > this.arcT) { this.highArc = !los; this.arcT = g.time + 2.5; }
     const lobbed = W.kind === 'seeker' || W.kind === 'strike';
     const highArc = (W.kind === 'shell' || W.kind === 'cluster') && this.highArc && t.def.pitchMax > 1;
     let tFlight = dist / v;
-    if (lobbed) tFlight = (2 * seekerSpeed(dist, W.gravity, W.launchPitch) * Math.sin(W.launchPitch)) / W.gravity;
-    else if (W.gravity) { const p0 = ballisticPitch(v, W.gravity, dist, 0, highArc); tFlight = dist / (v * Math.max(0.15, Math.cos(p0))); }
+    if (lobbed) tFlight = (2 * seekerSpeed(dist, G, W.launchPitch) * Math.sin(W.launchPitch)) / G;
+    else if (G) { const p0 = ballisticPitch(v, G, dist, 0, highArc); tFlight = dist / (v * Math.max(0.15, Math.cos(p0))); }
     const hd = Math.atan2(e.vx, e.vz);
     const turnRate = this.prevHd !== undefined && this.prevTarget === e ? Math.abs(wrapAngle(hd - this.prevHd)) / Math.max(dt, 1e-3) : 0;
     this.prevHd = hd; this.prevTarget = e;
@@ -264,9 +263,9 @@ export class Bot {
     c.aimDist = pd * (1 + this.errPitch);
     let pitch;
     if (lobbed) pitch = W.launchPitch;
-    else if (W.gravity) {
-      pitch = ballisticPitch(v, W.gravity, pd, ty - muzzleY, highArc);
-      if (pitch > t.def.pitchMax || pitch < t.def.pitchMin) pitch = ballisticPitch(v, W.gravity, pd, ty - muzzleY, !highArc);
+    else if (G) {
+      pitch = ballisticPitch(v, G, pd, ty - muzzleY, highArc);
+      if (pitch > t.def.pitchMax || pitch < t.def.pitchMin) pitch = ballisticPitch(v, G, pd, ty - muzzleY, !highArc);
     } else pitch = Math.atan2(ty - muzzleY, pd);
     c.aimPitch = clamp(pitch + (lobbed ? 0 : this.errPitch), t.def.pitchMin, t.def.pitchMax);
     // seeker lock: like a commander keeping the target in the reticle
@@ -275,8 +274,8 @@ export class Bot {
     c.lock = W.kind === 'seeker' && this.lockT >= W.lockTime * this.d.lockMul ? e.id : -1;
     const tol = Math.max(0.03, Math.atan2(2.2, dist)) * this.d.fireTol * (W.kind === 'strike' ? 4 : 1);
     const ready = g.time - this.targetSince > this.d.react;
-    const range = W.range || (W.gravity ? ((v * v) / W.gravity) * 0.95 : 160);
-    const pitchOk = lobbed || Math.abs(t.pitch - c.aimPitch) < (W.gravity > 8 ? 0.025 : 0.08);
+    const range = W.range || (G ? ((v * v) / G) * 0.95 : 160);
+    const pitchOk = lobbed || Math.abs(t.pitch - c.aimPitch) < (G > 8 ? 0.025 : 0.08);
     const canHit = los || lobbed || W.kind === 'cluster' || highArc;
     if (ready && pitchOk && yawErr < tol + Math.abs(this.errYaw) && dist < range && canHit && e.alive) c.fire = true;
     if (W.kind === 'seeker' && los && c.lock < 0 && this.lockT > 0) c.fire = false; // a lock is coming: wait for it

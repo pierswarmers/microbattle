@@ -157,8 +157,8 @@ export class World {
     const n = this.noise;
     const v = n(x * 0.05 + 9, z * 0.05 + 3);
     const meadow = n.fbm(x * 0.02 + 70, z * 0.02 - 20, 3);
-    let c = [lerp(0.4, 0.52, v), lerp(0.7, 0.8, v), lerp(0.27, 0.3, v)];
-    if (meadow > 0.6) { const k = smooth(clamp((meadow - 0.6) * 6, 0, 1)); c = [lerp(c[0], 0.68, k), lerp(c[1], 0.82, k), lerp(c[2], 0.3, k)]; }
+    let c = [lerp(0.4, 0.5, v), lerp(0.66, 0.76, v), lerp(0.28, 0.32, v)];
+    if (meadow > 0.6) { const k = smooth(clamp((meadow - 0.6) * 6, 0, 1)); c = [lerp(c[0], 0.62, k), lerp(c[1], 0.76, k), lerp(c[2], 0.32, k)]; }
     const forest = this.forestDensity(x, z);
     if (forest > 0.55) { const k = clamp((forest - 0.55) * 4, 0, 1); c = [lerp(c[0], 0.3, k), lerp(c[1], 0.56, k), lerp(c[2], 0.24, k)]; }
     if (pd < 4.6) { const k = 1 - smooth(clamp((pd - 2.4) / 2.2, 0, 1)); c = [lerp(c[0], 0.78, k), lerp(c[1], 0.62, k), lerp(c[2], 0.4, k)]; }
@@ -191,8 +191,38 @@ export class World {
       g.triC(a, c, d, ca, cc, cd);
       g.triC(a, d, b, ca, cd, cb);
     }
+    this.buildFarRing(g);
     this.terrain = new Mesh(this.r, g, { static: true, castShadow: false });
     this.terrain.add(m4.create());
+  }
+
+  /** Distant mountain ring beyond the height grid so the horizon is never empty from any position. */
+  buildFarRing(g) {
+    const n = this.noise, segs = 160;
+    const radii = [this.ext * 1.38, this.ext * 1.9, this.ext * 2.8, this.ext * 4.2];
+    const ringH = (a, k) => {
+      const ridge = n.fbm(Math.cos(a) * 3 + k * 7, Math.sin(a) * 3 - k * 5, 3);
+      return [24, 55 + ridge * 70, 40 + ridge * 90, -5][k];
+    };
+    const col = (k, h) => {
+      if (k === 3) return [0.55, 0.68, 0.78, 0];
+      if (h > 70) return [0.97, 0.97, 1, 0];
+      if (k === 0) return [0.38, 0.6, 0.32, 0];
+      return [0.5, 0.58, 0.5, 0];
+    };
+    const P = (a, k) => {
+      // the inner edge hides under the border hills of the height grid
+      const r = radii[k] * (k === 0 ? Math.SQRT1_2 : 1) * (1 + (n(a * 4 + k, k) - 0.5) * 0.12);
+      return [Math.cos(a) * r, ringH(a, k), Math.sin(a) * r];
+    };
+    for (let i = 0; i < segs; i++) {
+      const a0 = (i / segs) * Math.PI * 2, a1 = ((i + 1) / segs) * Math.PI * 2;
+      for (let k = 0; k < 3; k++) {
+        const p00 = P(a0, k), p01 = P(a1, k), p10 = P(a0, k + 1), p11 = P(a1, k + 1);
+        g.triC(p00, p10, p11, col(k, p00[1]), col(k + 1, p10[1]), col(k + 1, p11[1]));
+        g.triC(p00, p11, p01, col(k, p00[1]), col(k + 1, p11[1]), col(k, p01[1]));
+      }
+    }
   }
 
   buildWater() {

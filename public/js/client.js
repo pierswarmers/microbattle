@@ -9,7 +9,7 @@ import { Input } from './input.js';
 import { HUD } from './hud.js';
 import { Net } from './net.js';
 import { ballisticPitch, seekerSpeed } from './ai.js';
-import { TANK_TYPES, TANK_ORDER, TANK_GEOM, WEAPONS, WEAPON_ORDER, POWERUPS, PLAYER_COLORS } from './defs.js';
+import { TANK_TYPES, TANK_ORDER, TANK_GEOM, WEAPONS, WEAPON_ORDER, POWERUPS, PLAYER_COLORS, shotSpeed, shotGravity, rangeAimed } from './defs.js';
 import { m4, clamp, lerp, wrapAngle, approachAngle, makeRng, alignToNormal, dirFromYawPitch } from './math.js';
 
 export const VIEWS = ['chase', 'commander', 'birdseye'];
@@ -224,7 +224,7 @@ export class Client {
         const [mx, my, mz] = t.muzzle, [dx, dy, dz] = t.dir;
         const own = e.id === this.you;
         const off = own && this.view === 'commander' ? 2.2 : 0;
-        if (W.kind === 'flame') { for (let i = 0; i < 3; i++) fx.flame(mx, my, mz, dx * 28 + (Math.random() - 0.5) * 4, dy * 28 + 1, dz * 28 + (Math.random() - 0.5) * 4); at(mx, mz, 0.6, 'flame'); break; }
+        if (W.kind === 'flame') { t.flameT = this.time; at(mx, mz, 0.6, 'flame'); break; }
         const size = W.hv ? 1.6 : W.nuke ? 2 : W.kind === 'shell' ? 1.2 * (t.def.gun.dmg) : W.kind === 'cluster' ? 1.1 : W.kind === 'bullet' ? 0.35 : 0.7;
         if (!off) fx.muzzle(mx, my, mz, dx, dy, dz, size, W.color, true);
         else if (W.kind !== 'bullet') fx.add({ k: 'shock', x: mx + dx * 6, y: my + dy * 6, z: mz + dz * 6, life: 0.15, s0: 0.5, s1: 3, c0: W.color, a: 0.6 });
@@ -471,10 +471,12 @@ export class Client {
     }
     const W = WEAPONS[this.weapon];
     const lobbed = W.kind === 'seeker' || W.kind === 'strike';
+    const ranged = rangeAimed(def, this.weapon); // artillery lobs by range: ↑↓ set distance, the arc is solved
     // aiming: keys
     if (c.keyAim) { this.aim.mouse = false; this.aim.mouseBlock = ms.moved; }
     this.aim.yaw = wrapAngle(this.aim.yaw + c.turret * def.turret * 1.05 * dt);
-    if (lobbed) this.aim.range = clamp(this.aim.range * (1 + c.elev * 0.9 * dt), W.minRange || 15, W.range);
+    const maxR = W.range || Math.min(300, (shotSpeed(def, this.weapon) ** 2) / Math.max(1, shotGravity(def, this.weapon)) * 0.95);
+    if (ranged) this.aim.range = clamp(this.aim.range * (1 + c.elev * 0.9 * dt), W.minRange || 15, maxR);
     else this.aim.pitch += c.elev * def.pitchSpeed * dt;
     // aiming: mouse
     if (this.cfg.mouse !== false) {
@@ -483,7 +485,7 @@ export class Client {
         if (ms.locked) {
           const zk = c.zoom || ms.right ? 1 / def.zoom : 1;
           this.aim.yaw = wrapAngle(this.aim.yaw - ms.dx * 0.0025 * zk);
-          if (lobbed) this.aim.range = clamp(this.aim.range * (1 - ms.dy * 0.004), W.minRange || 15, W.range);
+          if (ranged) this.aim.range = clamp(this.aim.range * (1 - ms.dy * 0.004), W.minRange || 15, maxR);
           else this.aim.pitch -= ms.dy * 0.0022 * zk;
           if (ms.buttons & 1) c.fire = true;
           if (ms.right) c.zoom = true;
@@ -496,7 +498,7 @@ export class Client {
             const dx = hit[0] - me.x, dz = hit[2] - me.z, d = Math.hypot(dx, dz);
             this.aim.yaw = Math.atan2(dx, dz);
             this.mouseTarget = hit;
-            if (lobbed) this.aim.range = clamp(d, W.minRange || 15, W.range);
+            if (ranged) this.aim.range = clamp(d, W.minRange || 15, maxR);
             else this.aim.pitch = this.solvePitch(me, W, d, hit[1] + 1);
           }
         }
@@ -507,6 +509,11 @@ export class Client {
     const mouseLook = ms.locked && this.view !== 'birdseye';
     const dYaw = wrapAngle(this.aim.yaw - this.pred.yaw);
     if (!this.aim.mouse && !mouseLook && Math.abs(dYaw) > 0.6) this.aim.yaw = wrapAngle(this.pred.yaw + Math.sign(dYaw) * 0.6);
+    if (ranged && !lobbed) {
+      // high arc that drops onto the aimed range
+      const tx = me.x + Math.sin(this.aim.yaw) * this.aim.range, tz = me.z + Math.cos(this.aim.yaw) * this.aim.range;
+      this.aim.pitch = this.solvePitch(me, W, this.aim.range, this.world.heightAt(tx, tz), true);
+    }
     this.aim.pitch = clamp(this.aim.pitch, def.pitchMin, def.pitchMax);
     this.zoomed = c.zoom && this.view === 'commander';
     // predicted turret: same slew as the server, gently corrected toward the server's value
@@ -518,7 +525,8 @@ export class Client {
     // seeker lock-on: commander view only, target held near the centre of the sight
     this.updateLock(dt, W);
     if (c.smoke) this.smokeSeq++;
-    const aimDist = lobbed ? (this.lock.id >= 0 ? this.lockDist : this.aim.range) : this.rangeAlongGun(me) || 80;
+    const aimDist = lobbed ? (this.lock.id >= 0 ? this.lockDist : this.aim.range) : ranged ? this.aim.range : this.rangeAlongGun(me) || 80;
+    this.rangedAim = ranged;
     this.sendInput({ th: c.throttle, tu: c.turn, ay: +this.aim.yaw.toFixed(4), ap: +this.aim.pitch.toFixed(4), ad: +aimDist.toFixed(1), f: c.fire && !this.help, w: this.weapon, lk: this.lock.id, sm: this.smokeSeq });
   }
 
@@ -533,12 +541,11 @@ export class Client {
     }
   }
 
-  solvePitch(me, W, d, ty) {
-    const gun = W.id === 'standard' ? me.def.gun.speed || 1 : 1;
-    const v = (W.speed || 100) * gun;
-    if (!W.gravity) return Math.atan2(ty - me.muzzle[1], d);
-    let p = ballisticPitch(v, W.gravity, d, ty - me.muzzle[1], false);
-    if (p > me.def.pitchMax || p < me.def.pitchMin) p = ballisticPitch(v, W.gravity, d, ty - me.muzzle[1], true);
+  solvePitch(me, W, d, ty, high = false) {
+    const v = shotSpeed(me.def, W.id), G = shotGravity(me.def, W.id);
+    if (!G) return Math.atan2(ty - me.muzzle[1], d);
+    let p = ballisticPitch(v, G, d, ty - me.muzzle[1], high);
+    if (p > me.def.pitchMax || p < me.def.pitchMin) p = ballisticPitch(v, G, d, ty - me.muzzle[1], !high);
     return p;
   }
 
@@ -648,6 +655,15 @@ export class Client {
         fx.trackMark(t.x + rx * tw, t.z + rz * tw, t.yaw, 0.5 * t.scale);
         fx.trackMark(t.x - rx * tw, t.z - rz * tw, t.yaw, 0.5 * t.scale);
         if (Math.abs(t.net.spd) > t.def.speed * 0.6 && Math.random() < 0.5) fx.dust(t.x - fxv * L * 1.2, t.y, t.z - fzv * L * 1.2, 1);
+      }
+      // flamethrower: a continuous stream while the server says this tank is firing it
+      if (t.flameT && this.time - t.flameT < 0.25) {
+        const n = Math.ceil(dt * 45);
+        for (let i = 0; i < n; i++) {
+          const sp = 26 + Math.random() * 8, j = 0.12;
+          const ddx = t.dir[0] + (Math.random() - 0.5) * j, ddz = t.dir[2] + (Math.random() - 0.5) * j;
+          fx.flame(t.muzzle[0], t.muzzle[1], t.muzzle[2], ddx * sp + t.net.vx, t.dir[1] * sp + 1, ddz * sp + t.net.vz);
+        }
       }
       if (t.net.burn && Math.random() < dt * 20) fx.flame(t.x + (Math.random() - 0.5) * 2, t.y + 1.2, t.z + (Math.random() - 0.5) * 2, 0, 2, 0);
       if (t.net.heat > 2.5 && Math.random() < dt * 6) fx.smokeTrail(t.x, t.y + 2, t.z, 0.3, 0.2);
@@ -777,7 +793,7 @@ export class Client {
       const px = me.muzzle[0] + me.dir[0] * 0.3, py = Math.max(me.muzzle[1] + 0.35 * me.scale, me.y + 2.4), pz = me.muzzle[2] + me.dir[2] * 0.3;
       let dir = me.dir.slice();
       v.impact = null;
-      if (W.kind === 'seeker' || W.kind === 'strike' || (W.gravity && me.p > 0.5)) {
+      if (W.kind === 'seeker' || W.kind === 'strike' || (shotGravity(me.def, W.id) && me.p > 0.5)) {
         const imp = this.predictImpact(me, W);
         v.impact = imp;
         if (imp) { const dx = imp[0] - px, dy = imp[1] - py, dz = imp[2] - pz, l = Math.hypot(dx, dy, dz); dir = [dx / l, dy / l, dz / l]; }
@@ -817,10 +833,10 @@ export class Client {
       const v = seekerSpeed(dist, W.gravity, W.launchPitch), d = dirFromYawPitch(t.ty, W.launchPitch);
       vx = d[0] * v; vy = d[1] * v; vz = d[2] * v;
     } else {
-      const v = W.speed * (W.id === 'standard' ? t.def.gun.speed || 1 : 1);
+      const v = shotSpeed(t.def, W.id);
       vx = t.dir[0] * v; vy = t.dir[1] * v; vz = t.dir[2] * v;
     }
-    const h = 1 / 30, g = W.gravity || 0;
+    const h = 1 / 30, g = W.kind === 'seeker' || W.kind === 'strike' ? W.gravity : shotGravity(t.def, W.id);
     for (let i = 0; i < 600; i++) {
       vy -= g * h; x += vx * h; y += vy * h; z += vz * h;
       const gy = this.world.heightAt(x, z);
@@ -931,13 +947,14 @@ export class Client {
       if (s.t <= -0.5) continue;
       const g = this.world.heightAt(s.x, s.z);
       const pulse = 0.55 + Math.sin(this.time * (s.t < 2 ? 18 : 8)) * 0.35;
-      alignToNormal(m, s.x, g + 0.3, s.z, [0, 1, 0], 0, s.r, 1, s.r);
-      M.teamRing.add(m, 1, 0.15, 0.1, pulse);
-      alignToNormal(m, s.x, g + 0.25, s.z, [0, 1, 0], this.time, s.r * 0.5, 1, s.r * 0.5);
-      M.teamRing.add(m, 1, 0.3, 0.2, pulse * 0.6);
-      M.decal.add(alignToNormal(m, s.x, g + 0.2, s.z, [0, 1, 0], 0, s.r, 1, s.r), 1, 0.1, 0.05, 0.12);
-      m4.compose(m, s.x, g, s.z, this.time, 0, 0, 2, 60, 2);
-      M.beacon.add(m, 0.9, 0.12, 0.08, 0.95);
+      // a clean danger circle: thin bright edge, a shrinking countdown ring and a soft red fill
+      for (const k of [1, 0.985]) { alignToNormal(m, s.x, g + 0.4, s.z, [0, 1, 0], 0, s.r * k, 1, s.r * k); M.thinRing.add(m, 1, 0.15, 0.1, pulse); }
+      const cd = clamp(s.t / WEAPONS.strike.delay, 0, 1);
+      alignToNormal(m, s.x, g + 0.35, s.z, [0, 1, 0], 0, s.r * cd, 1, s.r * cd);
+      M.thinRing.add(m, 1, 0.8, 0.3, 0.8);
+      M.decal.add(alignToNormal(m, s.x, g + 0.2, s.z, [0, 1, 0], 0, s.r, 1, s.r), 1, 0.1, 0.05, 0.14);
+      m4.compose(m, s.x, g, s.z, this.time, 0, 0, 1, 45, 1);
+      M.beacon.add(m, 0.7, 0.1, 0.06, 0.8);
     }
   }
 
@@ -953,10 +970,10 @@ export class Client {
       const dist = this.aim.range, sp = seekerSpeed(dist, W.gravity, W.launchPitch), d = dirFromYawPitch(me.ty, W.launchPitch);
       vx = d[0] * sp; vy = d[1] * sp; vz = d[2] * sp;
     } else {
-      const sp = W.speed * (W.id === 'standard' ? me.def.gun.speed || 1 : 1);
+      const sp = shotSpeed(me.def, W.id);
       vx = me.dir[0] * sp; vy = me.dir[1] * sp; vz = me.dir[2] * sp;
     }
-    const g = W.gravity || 0;
+    const g = W.kind === 'seeker' || W.kind === 'strike' ? W.gravity : shotGravity(me.def, W.id);
     const maxLen = W.kind === 'bullet' ? 80 : 500;
     let dist = 0, i = 0, end = null;
     const step = v.kind === 'birdseye' ? 3 : 2;

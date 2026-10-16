@@ -5,7 +5,7 @@ import { World, WATER_LEVEL } from './world.js';
 import { Bot, ballisticPitch, seekerSpeed } from './ai.js';
 import {
   TANK_TYPES, TANK_ORDER, TANK_GEOM, WEAPONS, POWERUPS, POWERUP_ORDER, PICKUP_KINDS, CRATE_WEAPONS,
-  PLAYER_COLORS, SMOKE, FLAME_HEAT, WEAPON_ORDER, pickWeighted,
+  PLAYER_COLORS, SMOKE, FLAME_HEAT, WEAPON_ORDER, pickWeighted, shotSpeed, shotGravity,
 } from './defs.js';
 import { m4, clamp, lerp, wrapAngle, approachAngle, makeRng, alignToNormal, dirFromYawPitch } from './math.js';
 
@@ -60,7 +60,6 @@ export class Sim {
     this.bots = [];
     const humans = entries.filter((e) => e.human);
     let botCount = cfg.bots === 'auto' ? 4 - humans.length : Math.min(cfg.bots, 4 - humans.length);
-    if (humans.length === 0 && botCount < 2) botCount = Math.max(2, botCount);
     const used = new Set(humans.map((h) => h.slot));
     const names = new Set();
     const order = humans.map((h) => ({ ...h }));
@@ -456,7 +455,8 @@ export class Sim {
     if (spread) { yaw += (this.rng() - 0.5) * 2 * spread; pitch += (this.rng() - 0.5) * spread; }
     if (W.kind === 'seeker' || W.kind === 'strike') pitch = Math.max(pitch, W.launchPitch);
     const d = dirFromYawPitch(yaw, pitch);
-    const base = { owner: t, w: w.id, W, x: mx, y: my, z: mz, age: 0, id: this.nextId++, dmg: W.dmg * dmgMul, splash: W.splash || 0, splashDmg: (W.splashDmg || 0) * dmgMul };
+    const splashMul = w.id === 'standard' ? t.def.gun.splash || 1 : 1;
+    const base = { owner: t, w: w.id, W, x: mx, y: my, z: mz, age: 0, id: this.nextId++, dmg: W.dmg * dmgMul, splash: (W.splash || 0) * splashMul, splashDmg: (W.splashDmg || 0) * dmgMul };
     let p;
     if (W.kind === 'flame') {
       const v = W.speed * (0.85 + this.rng() * 0.3);
@@ -476,8 +476,8 @@ export class Sim {
         if (lt && this.lockValid(t, lt, 0.35)) { p.target = lt; this.emit('locked', { id: t.id, target: lt.id }); }
       } else t.strikeCd = W.cooldown;
     } else {
-      const v = W.speed * (w.id === 'standard' ? t.def.gun.speed || 1 : 1);
-      p = { ...base, kind: W.kind, vx: d[0] * v, vy: d[1] * v, vz: d[2] * v, g: W.gravity || 0, life: W.kind === 'bullet' ? W.range / v : 10 };
+      const v = shotSpeed(t.def, w.id);
+      p = { ...base, kind: W.kind, vx: d[0] * v, vy: d[1] * v, vz: d[2] * v, g: shotGravity(t.def, w.id), life: W.kind === 'bullet' ? W.range / v : 10 };
     }
     this.projectiles.push(p);
     if (W.hv) { t.kx -= Math.sin(t.turretYaw) * W.selfKnock; t.kz -= Math.cos(t.turretYaw) * W.selfKnock; }

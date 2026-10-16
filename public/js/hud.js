@@ -187,7 +187,7 @@ export class HUD {
     if (q) this.crosshair(q.x, q.y, me.css, W.kind === 'bullet' ? 9 + me.net.bloom * 120 : 9);
     this.reload(v.w / 2, v.h - 120, me, W);
     if (W.kind === 'seeker') this.label(v.w / 2, v.h - 150, 'Seeker lock-on needs COMMANDER view (C)', 12, '#ffe08a', 'center');
-    if (W.kind === 'strike' || W.kind === 'seeker') this.label(v.w / 2, v.h - 92, `RANGE ${Math.round(g.aim.range)}m  (↑↓)`, 13, '#bfffd0', 'center');
+    if (W.kind === 'strike' || W.kind === 'seeker' || g.rangedAim) this.label(v.w / 2, v.h - 92, `RANGE ${Math.round(g.aim.range)}m  (↑↓)`, 13, '#bfffd0', 'center');
   }
 
   drawBirdsReticle(v, me) {
@@ -196,7 +196,7 @@ export class HUD {
     if (g.aim.mouse && g.mouseTarget) { const q = this.project(v, ...g.mouseTarget); if (q) this.crosshair(q.x, q.y, me.css); }
     const p = this.project(v, me.x, me.y, me.z);
     if (p) this.reload(p.x, p.y + 30, me, W, 18);
-    if (W.kind === 'strike' || W.kind === 'seeker') this.label(v.w / 2, v.h - 160, `RANGE ${Math.round(g.aim.range)}m  (↑↓ or mouse)`, 13, '#bfffd0', 'center');
+    if (W.kind === 'strike' || W.kind === 'seeker' || g.rangedAim) this.label(v.w / 2, v.h - 160, `RANGE ${Math.round(g.aim.range)}m  (↑↓ or mouse)`, 13, '#bfffd0', 'center');
   }
 
   reload(x, y, me, W, r = 14) {
@@ -244,8 +244,8 @@ export class HUD {
       ctx.strokeStyle = `rgba(255,80,60,${g.hitMarkT * 4})`; ctx.lineWidth = 3;
       ctx.beginPath(); for (const [a, b] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) { ctx.moveTo(cx + a * 10, cy + b * 10); ctx.lineTo(cx + a * 22, cy + b * 22); } ctx.stroke();
     }
-    const lobbed = W.kind === 'seeker' || W.kind === 'strike';
-    const range = lobbed ? (g.lock.id >= 0 ? g.lockDist : g.aim.range) : v.impact ? Math.hypot(v.impact[0] - me.x, v.impact[2] - me.z) : g.rangeAlongGun(me);
+    const lobbed = W.kind === 'seeker' || W.kind === 'strike' || g.rangedAim;
+    const range = lobbed && !v.impact ? (g.lock.id >= 0 ? g.lockDist : g.aim.range) : v.impact ? Math.hypot(v.impact[0] - me.x, v.impact[2] - me.z) : g.rangeAlongGun(me);
     this.label(cx + 50, cy + 22, range ? `RNG ${Math.round(range)}m` : 'RNG ---', 13, '#bfffd0', 'left');
     this.label(cx + 50, cy + 40, lobbed ? 'RANGE ↑↓' : `ELV ${(me.p * 57.3).toFixed(1)}°`, 12, '#bfffd0', 'left');
     if (g.zoomed) this.label(cx + 50, cy - 22, `ZOOM ${me.def.zoom}x`, 13, '#ffe08a', 'left');
@@ -286,7 +286,7 @@ export class HUD {
       if (s.t <= 0) continue;
       const q = this.project(v, s.x, g.world.heightAt(s.x, s.z) + 6, s.z);
       if (q && Math.abs(q.nx) < 1.05 && Math.abs(q.ny) < 1.05) this.label(q.x, q.y, `✈ ${s.t.toFixed(1)}`, 22, '#ff4a3a', 'center', 'middle', COMIC, '#2a1033');
-      if (me && me.net.al && Math.hypot(me.x - s.x, me.z - s.z) < s.r + 6 && Math.floor(g.realTime * 5) % 2 === 0) this.banner(W / 2, H * 0.2, `GET OUT! AIR STRIKE IN ${s.t.toFixed(1)}s`, '#ff4a3a', 20);
+      if (me && me.net.al && Math.hypot(me.x - s.x, me.z - s.z) < s.r + 6 && Math.floor(g.realTime * 5) % 2 === 0) this.banner(W / 2, H - 175, `GET OUT! AIR STRIKE IN ${s.t.toFixed(1)}s`, '#ff4a3a', 20);
     }
   }
 
@@ -435,7 +435,7 @@ export class HUD {
 
   drawAnnouncements(W, H) {
     const g = this.g, ctx = this.ctx;
-    g.announce.slice(-2).forEach((a, i) => {
+    g.announce.slice(-1).forEach((a, i) => {
       const t = a.t;
       const pop = t < 0.2 ? 0.5 + t * 3 : 1.1 - Math.min(0.1, (t - 0.2) * 0.5);
       ctx.save();

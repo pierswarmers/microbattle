@@ -6,6 +6,8 @@ import { resolveConfig } from '../public/js/config.js';
 import { WEAPONS, TANK_ORDER, TANK_TYPES } from '../public/js/defs.js';
 import { World } from '../public/js/world.js';
 import { NULL_MODELS } from '../public/js/sim.js';
+import { makeRng } from '../public/js/math.js';
+const rnd = makeRng(4242);
 
 const what = process.argv[2] || 'all';
 const runs = +(process.argv[process.argv.indexOf('--runs') + 1] || 6);
@@ -17,7 +19,7 @@ function flatSpot(sim, need = 140) {
   const W = sim.world;
   let best = null, bs = 1e9;
   for (let i = 0; i < 400; i++) {
-    const x = (Math.random() - 0.5) * W.size * 0.6, z = (Math.random() - 0.5) * W.size * 0.6;
+    const x = (rnd() - 0.5) * W.size * 0.6, z = (rnd() - 0.5) * W.size * 0.6;
     let s = 0, ok = true;
     for (let d = 0; d <= need; d += 10) {
       const px = x + d, h = W.heightAt(px, z);
@@ -25,6 +27,7 @@ function flatSpot(sim, need = 140) {
       s += Math.abs(h - W.heightAt(x, z));
       W.query(px, z, 3, () => { s += 5; });
     }
+    if (ok && W.segmentBlocked(x, W.heightAt(x, z) + 2, z, x + need - 20, W.heightAt(x + need - 20, z) + 1.5, z)) ok = false;
     if (ok && s < bs) { bs = s; best = [x, z]; }
   }
   return best;
@@ -77,8 +80,8 @@ if (what === 'weapons' || what === 'all') {
     const ranges = wid === 'flame' ? [10] : wid === 'rapid' ? [25, 60] : [40, 90];
     for (const r of ranges) for (const mv of [false, true]) {
       let dps = 0, acc = 0, shots = 0;
-      for (let k = 0; k < Math.max(2, runs / 3); k++) { const q = weaponTest(wid, r, mv, wid === 'massive' ? 60 : 30); dps += q.dps; acc += q.shots ? q.hits / q.shots : 0; shots += q.shots; }
-      const n = Math.max(2, runs / 3);
+      for (let k = 0; k < Math.max(6, runs); k++) { const q = weaponTest(wid, r, mv, wid === 'massive' ? 60 : 30); dps += q.dps; acc += q.shots ? q.hits / q.shots : 0; shots += q.shots; }
+      const n = Math.max(6, runs);
       dps /= n; acc /= n;
       // damage a full magazine can deal at this hit rate (ammo is the long-term limiter)
       const perShot = dps * (W.reload) ;

@@ -486,6 +486,7 @@ export function createModels(r, rng) {
   M.shock = new Mesh(r, new Geo().ring(0, 0, 0, 0.8, 1, 24, [1, 1, 1, 1]), { capacity: 64, transparent: true, additive: true, mode: 1, cull: false, castShadow: false, layer: 6 });
   M.decal = new Mesh(r, new Geo().ring(0, 0, 0, 0, 1, 12, [1, 1, 1, 1]), { capacity: 256, transparent: true, castShadow: false, layer: 1, mode: 1 });
   M.track = new Mesh(r, new Geo().box(0, 0, 0, 1, 0.01, 1, [1, 1, 1, 1]), { capacity: 2048, transparent: true, castShadow: false, layer: 1, mode: 1 });
+  M.thinRing = new Mesh(r, new Geo().ring(0, 0, 0, 0.965, 1, 64, [1, 1, 1, 1]), { capacity: 32, transparent: true, castShadow: false, layer: 2, mode: 1, cull: false });
   M.teamRing = new Mesh(r, new Geo().ring(0, 0, 0, 0.82, 1, 28, [1, 1, 1, 1]), { capacity: 16, transparent: true, castShadow: false, layer: 2, mode: 1, cull: false });
   M.bubble = new Mesh(r, unitSphere, { capacity: 8, transparent: true, additive: true, mode: 1, castShadow: false, layer: 8, cull: false });
   // light beacon over pickups: bright at the base, fading to nothing at the top (additive)

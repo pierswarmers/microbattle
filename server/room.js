@@ -11,6 +11,7 @@ export class Room {
     this.cfg = cfg;
     this.log = log;
     this.clients = new Map();
+    this.reserved = new Map(); // name -> {slot, t} for players who just dropped
     this.sim = new Sim(cfg);
     this.lobbyT = cfg.lobbyTimeout;
     this.overT = 0;
@@ -29,7 +30,10 @@ export class Room {
   /** Seats 0-3. Prefer a seat with no tank at all, then one a bot is driving. */
   freeSeat() {
     const taken = new Set([...this.clients.values()].filter((c) => c.slot >= 0).map((c) => c.slot));
-    const free = [0, 1, 2, 3].filter((s) => !taken.has(s));
+    // keep recently vacated seats free for their owners if anything else is available
+    const held = new Set([...this.reserved.values()].filter((r) => Date.now() - r.t < 60000).map((r) => r.slot));
+    let free = [0, 1, 2, 3].filter((s) => !taken.has(s) && !held.has(s));
+    if (!free.length) free = [0, 1, 2, 3].filter((s) => !taken.has(s));
     return free.find((s) => !this.sim.tankById(s)) ?? free[0] ?? -1;
   }
 
@@ -44,7 +48,11 @@ export class Room {
 
   seat(c) {
     if (c.slot >= 0) return;
-    c.slot = this.freeSeat();
+    // a player who drops and reconnects within a minute gets their own seat (and tank) back
+    const r = this.reserved.get(c.name);
+    const taken = new Set([...this.clients.values()].filter((q) => q.slot >= 0).map((q) => q.slot));
+    if (r && Date.now() - r.t < 60000 && !taken.has(r.slot)) { c.slot = r.slot; this.reserved.delete(c.name); }
+    else c.slot = this.freeSeat();
     if (c.slot >= 0 && this.sim.state !== 'lobby') this.sim.humanJoin(c.slot, c.name, c.type);
   }
 
@@ -53,6 +61,7 @@ export class Room {
     if (!c.hello) return;
     this.log(`${c.name} left${c.slot >= 0 ? ` (seat ${c.slot + 1})` : ' (spectator)'}`);
     if (c.slot >= 0) {
+      this.reserved.set(c.name, { slot: c.slot, t: Date.now() });
       if (this.sim.state !== 'lobby') this.sim.humanLeave(c.slot);
       // promote the longest-waiting spectator into the freed seat
       const next = [...this.clients.values()].find((q) => q.hello && q.slot < 0);
