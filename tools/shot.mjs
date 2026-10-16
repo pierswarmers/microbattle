@@ -44,15 +44,19 @@ const httpPort = server.address().port;
 
 const chrome = findChrome();
 if (!chrome) { console.error('No Chromium found; set CHROME=...'); process.exit(1); }
-const dbgPort = 9300 + Math.floor(Math.random() * 500);
 const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mbshot-'));
 const proc = spawn(chrome, [
-  '--headless=new', `--remote-debugging-port=${dbgPort}`, `--user-data-dir=${userDir}`, `--window-size=${W},${H}`,
+  '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${userDir}`, `--window-size=${W},${H}`,
   '--no-first-run', '--no-default-browser-check', '--autoplay-policy=no-user-gesture-required', '--ignore-gpu-blocklist',
   '--enable-webgl', '--use-angle=metal', '--enable-unsafe-swiftshader', '--mute-audio', 'about:blank',
 ], { stdio: ['ignore', 'ignore', 'pipe'] });
 proc.stderr.on('data', () => {});
 
+// port 0 lets Chrome pick a free port (safe for parallel runs); it reports it in DevToolsActivePort
+let dbgPort;
+for (let i = 0; i < 100 && !dbgPort; i++) {
+  try { dbgPort = parseInt(fs.readFileSync(path.join(userDir, 'DevToolsActivePort'), 'utf8').split('\n')[0], 10); } catch { await new Promise((r) => setTimeout(r, 100)); }
+}
 let targets;
 for (let i = 0; i < 60; i++) {
   try { targets = await (await fetch(`http://127.0.0.1:${dbgPort}/json`)).json(); if (targets.find((t) => t.type === 'page')) break; } catch { /* retry */ }

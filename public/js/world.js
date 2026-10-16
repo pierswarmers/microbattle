@@ -666,10 +666,10 @@ export class World {
       const lx = x + Math.cos(a) * b.lat, lz = z + Math.sin(a) * b.lat;
       const yaw = Math.atan2(fx, fz);
       const y = b.y + Math.sin(time * 0.7 + b.off * 10) * 1.5;
-      M.bird.add(m4.compose(m, lx, y, lz, yaw, 0, 0, 1.6));
+      M.bird.add(m4.compose(m, lx, y, lz, yaw, 0, 0, 1.0));
       const flap = Math.sin(time * 9 + b.flap) * 0.7;
-      M.wing.add(m4.compose(m, lx, y, lz, yaw, 0, flap, 1.6));
-      M.wing.add(m4.compose(m, lx, y, lz, yaw + Math.PI, 0, flap, 1.6));
+      M.wing.add(m4.compose(m, lx, y, lz, yaw, 0, flap, 1.0));
+      M.wing.add(m4.compose(m, lx, y, lz, yaw + Math.PI, 0, flap, 1.0));
     }
     for (const f of this.ambient.flies) {
       const yaw = Math.atan2(Math.cos(f.t * 0.7), -Math.sin(f.t * 0.5));

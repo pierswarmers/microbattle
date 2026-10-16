@@ -73,10 +73,11 @@ float vnoise(vec2 p) {
   return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
 }
 
-float shadowAt() {
+float shadowAt(float ndl) {
   vec3 p = vLight.xyz / vLight.w * 0.5 + 0.5;
   if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 1.0;
-  float bias = 0.0016;
+  // slope-scaled bias avoids striping on steep hillsides
+  float bias = 0.0014 + 0.005 * (1.0 - ndl);
   vec2 t = vec2(1.0 / 2048.0);
   float s = 0.0;
   s += texture(uShadow, vec3(p.xy + vec2(-t.x, -t.y), p.z - bias));
@@ -102,9 +103,12 @@ void main() {
   vec3 n = normalize(vNor);
   if (!gl_FrontFacing) n = -n;
   float ndl = max(dot(n, uSunDir), 0.0);
+  float rawNdl = ndl;
   // soft cel banding for a toy-like look
   ndl = smoothstep(0.0, 0.08, ndl) * 0.35 + smoothstep(0.25, 0.6, ndl) * 0.45 + ndl * 0.2;
-  float sh = uShadowOn > 0.5 ? shadowAt() : 1.0;
+  float sh = uShadowOn > 0.5 ? shadowAt(rawNdl) : 1.0;
+  // fade real shadows out with distance (the shadow map only covers the area near the action)
+  sh = mix(sh, 1.0, smoothstep(140.0, 220.0, length(uCamPos - vWorld)));
   float cloud = smoothstep(0.52, 0.72, vnoise(vWorld.xz * 0.012 + vec2(uTime * 0.018, uTime * 0.007)));
   sh *= 1.0 - cloud * 0.32;
   vec3 hemi = mix(uGroundCol, uSkyCol, n.y * 0.5 + 0.5);

@@ -42,7 +42,7 @@ export class FX {
       const a = R() * Math.PI * 2, sp = (1 + R() * 3) * s;
       const g = 0.25 + R() * 0.2;
       this.add({ k: 'puff', x: x + Math.cos(a) * s, y: y + 0.6 + R() * s, z: z + Math.sin(a) * s, vx: Math.cos(a) * sp, vy: 2 + R() * 3 * s, vz: Math.sin(a) * sp, drag: 1.5, rise: 1.2,
-        life: 1.4 + R() * 1.6, s0: (0.8 + R() * 0.6) * s, s1: (2.4 + R() * 1.8) * s, c0: [g, g, g], c1: [0.55, 0.55, 0.55], a: 0.85, delay: 0.08 + R() * 0.15 });
+        life: 1.4 + R() * 1.6, s0: (0.8 + R() * 0.6) * s, s1: (2.4 + R() * 1.8) * s, c0: [g + 0.1, g + 0.1, g + 0.1], c1: [0.7, 0.7, 0.7], a: 0.7, delay: 0.08 + R() * 0.15 });
     }
     const nSpark = Math.round(10 + 14 * s);
     for (let i = 0; i < nSpark; i++) {

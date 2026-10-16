@@ -43,7 +43,7 @@ export class HUD {
       if (v.kind === 'commander') this.drawScope(v);
       if (v.kind === 'overview') this.label(v.x + v.w / 2, v.y + 22, 'BATTLEFIELD OVERVIEW', 14, '#fff', 'center');
       if (v.tank && (v.kind === 'commander' || views.length > 1 || g.cfg.split)) this.drawPanel(v.tank, v.x + 12, v.y + v.h - 12, 'bl', v);
-      if (v.tank && v.kind === 'commander') this.drawMinimap(v.x + v.w - 12, v.y + v.h - 12, Math.min(150, v.w * 0.24), v.tank);
+      if (v.tank && v.kind === 'commander') this.drawMinimap(v.x + v.w - 12, v.y + v.h - 12, Math.min(150, v.w * (views.length > 1 ? 0.15 : 0.22)), v.tank);
       if (v.tank && !v.tank.alive) this.drawDeadNotice(v);
       ctx.restore();
       if (views.length > 1) { ctx.strokeStyle = 'rgba(20,20,30,0.9)'; ctx.lineWidth = 3; ctx.strokeRect(v.x, v.y, v.w, v.h); }
@@ -67,7 +67,7 @@ export class HUD {
     if (g.state === 'paused') this.drawPause(W, H);
     if (g.state === 'over') this.drawGameOver(W, H);
     if (g.cfg.debug || g.cfg.fps) this.label(8, H - 8, `${g.fps.toFixed(0)} fps · ${g.fx.parts.length} particles · ${g.projectiles.length} proj`, 12, '#fff', 'left', 'bottom');
-    if (!g.audioStarted && g.state !== 'over') this.label(W / 2, 64, '🔊 press any key or click to enable sound', 13, 'rgba(255,255,255,0.85)', 'center');
+    if (!g.audioStarted && g.state === 'countdown') this.label(W / 2, H * 0.55, '🔊 press any key or click to enable sound', 13, 'rgba(255,255,255,0.85)', 'center');
   }
 
   // ---------- primitives ----------
@@ -263,6 +263,7 @@ export class HUD {
         if (y < g.world.heightAt(x, z)) { range = s; break; }
         g.world.query(x, z, 0.3, (o) => { if (y < o.top) { range = s; return false; } });
         for (const e of g.tanks) if (e !== t && e.alive && Math.hypot(e.x - x, e.z - z) < e.radius && y < e.y + 2.6) range = s;
+        for (const p of g.pickups) if (p.active && Math.hypot(p.x - x, p.z - z) < 1.2 && y < p.y + 2.6) range = s;
       }
     }
     this.label(cx + 50, ry + 22, range ? `RNG ${Math.round(range)}m` : 'RNG ---', 13, '#bfffd0', 'left');
@@ -485,8 +486,9 @@ export class HUD {
     // controls reminder
     const hs = g.humans;
     hs.forEach((t, i) => {
-      this.roundRect(W / 2 - 330, H * 0.62 + i * 30 - 12, 660, 26, 13, 'rgba(0,0,0,0.5)');
-      this.label(W / 2, H * 0.62 + i * 30, `${t.name}: ${KEYMAPS[t.slot].help}${g.cfg.mode === 'commander' && t.slot === 0 ? ' · click for mouse-look' : ''}`, 12, t.css, 'center');
+      const hy = H - 150 - (hs.length - 1 - i) * 30;
+      this.roundRect(W / 2 - 330, hy - 12, 660, 26, 13, 'rgba(0,0,0,0.5)');
+      this.label(W / 2, hy, `${t.name}: ${KEYMAPS[t.slot].help}${g.cfg.mode === 'commander' && t.slot === 0 ? ' · click for mouse-look' : ''}`, 12, t.css, 'center');
     });
   }
 

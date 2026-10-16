@@ -60,12 +60,14 @@ export class Bot {
     for (const e of this.enemies()) {
       const d = Math.hypot(e.x - t.x, e.z - t.z);
       if (e.power.ghost > 0 && d > 12) continue;
+      if (e.invulnT > 0.3) continue; // don't waste shells on spawn-protected tanks
       if (d > this.d.sense && e !== t.lastHitBy) continue;
       const los = !this.g.world.segmentBlocked(t.x, t.y + 2, t.z, e.x, e.y + 1.5, e.z);
       let s = d - (los ? 35 : 0) - (1 - e.hp / e.maxHp) * 25;
       if (e === t.lastHitBy && t.lastHitT > this.g.time - 4) s -= 40;
       if (e === this.target) s -= 15; // hysteresis
       if (e.human) s -= 5;
+      if (t.def.id === 'bulldog') s += d * 0.8; // brawlers go for whoever is closest
       if (s < bestScore) { bestScore = s; best = e; }
     }
     if (best !== this.target) { this.target = best; this.targetSince = this.g.time; }
@@ -181,7 +183,7 @@ export class Bot {
       // long-range tanks back away to keep their preferred distance
       if (this.target && this.style.flee > 0.3) {
         const dT = Math.hypot(this.target.x - t.x, this.target.z - t.z);
-        if (dT < this.style.range * 0.65) {
+        if (dT < this.style.range * 0.8) {
           wantReverse = true;
           steerX = t.x - this.target.x; steerZ = t.z - this.target.z;
         }
@@ -244,23 +246,35 @@ export class Bot {
       if (this.thinkT === 0.35 || !c.weapon) c.weapon = this.chooseWeapon(dist, los) || t.weapons[0].id;
       const W = WEAPONS[c.weapon];
       const v = W.speed || 200;
+      // mortars use the fast flat arc when they can see the target, the high arc only to drop over cover
+      // sticky arc choice so the slow-elevating barrel isn't flip-flopping between solutions
+      if (this.arcT === undefined || g.time > this.arcT) { this.highArc = !los; this.arcT = g.time + 2.5; }
+      const highArc = W.kind === 'lob' && this.highArc;
       let tFlight = dist / v;
       if (W.kind === 'lob' || W.kind === 'shell') {
         // flight time from the solved launch angle (a high mortar arc is slow!)
-        const p0 = ballisticPitch(v, W.gravity, dist, 0, W.kind === 'lob');
+        const p0 = ballisticPitch(v, W.gravity, dist, 0, highArc);
         tFlight = dist / (v * Math.max(0.15, Math.cos(p0)));
       }
-      const lead = W.kind === 'rail' || W.kind === 'rocket' ? 0 : this.d.lead;
-      const px = e.x + e.vx * tFlight * lead, pz = e.z + e.vz * tFlight * lead;
+      // estimate how hard the target is turning; straight-line leads are useless against circling tanks
+      const hd = Math.atan2(e.vx, e.vz);
+      const turnRate = this.prevHd !== undefined && this.prevTarget === e ? Math.abs(wrapAngle(hd - this.prevHd)) / Math.max(dt, 1e-3) : 0;
+      this.prevHd = hd; this.prevTarget = e;
+      this.turnEst = (this.turnEst || 0) * 0.9 + turnRate * 0.1;
+      let lead = W.kind === 'rail' || W.kind === 'rocket' ? 0 : this.d.lead;
+      lead *= clamp(1 - this.turnEst * tFlight * 0.35, 0.2, 1);
+      let lx = e.vx * tFlight * lead, lz = e.vz * tFlight * lead;
+      const ll = Math.hypot(lx, lz), cap = tFlight > 2.5 ? 14 : 60; // long lobs: don't over-commit to a guess
+      if (ll > cap) { lx *= cap / ll; lz *= cap / ll; }
+      const px = e.x + lx, pz = e.z + lz;
       const pdx = px - t.x, pdz = pz - t.z, pd = Math.hypot(pdx, pdz);
-      const muzzleY = t.y + 1.8;
+      const muzzleY = t.muzzle[1];
       const ty = g.world.heightAt(px, pz) + 1.2;
       c.aimYaw = Math.atan2(pdx, pdz) + this.errYaw;
       let pitch;
       if (W.kind === 'lob') {
-        // prefer the high arc (drops over cover); fall back to the flat arc when too close for it
-        pitch = ballisticPitch(v, W.gravity, pd, ty - muzzleY, true);
-        if (pitch > t.def.pitchMax) pitch = ballisticPitch(v, W.gravity, pd, ty - muzzleY, false);
+        pitch = ballisticPitch(v, W.gravity, pd, ty - muzzleY, highArc);
+        if (pitch > t.def.pitchMax || pitch < t.def.pitchMin) pitch = ballisticPitch(v, W.gravity, pd, ty - muzzleY, !highArc);
       }
       else if (W.kind === 'shell') pitch = ballisticPitch(v, W.gravity, pd, ty - muzzleY, false);
       else pitch = Math.atan2(ty - muzzleY, pd);
@@ -268,9 +282,13 @@ export class Bot {
       const yawErr = Math.abs(wrapAngle(t.turretYaw - c.aimYaw));
       const tol = Math.max(0.03, Math.atan2(2.2, dist)) * this.d.fireTol;
       const ready = g.time - this.targetSince > this.d.react;
-      const range = W.range || (W.kind === 'lob' ? 200 : 160);
-      if (ready && yawErr < tol + Math.abs(this.errYaw) && dist < range && (los || W.kind === 'lob') && e.alive) c.fire = true;
-      if (W.kind === 'lob' && dist < 25) c.fire = false;
+      const range = W.range || (W.kind === 'lob' ? (W.speed * W.speed) / W.gravity * 0.95 : 160);
+      const pitchErr = Math.abs(t.pitch - c.aimPitch);
+      const pitchOk = pitchErr < (W.kind === 'lob' || W.kind === 'shell' ? 0.025 : 0.08);
+      if (ready && pitchOk && yawErr < tol + Math.abs(this.errYaw) && dist < range && (los || W.kind === 'lob') && e.alive) c.fire = true;
+      if (W.kind === 'lob' && dist < 18) c.fire = false;
+      // a 5-second high arc only makes sense against slow targets; otherwise hold fire and wait for a clear shot
+      if (highArc && Math.hypot(e.vx, e.vz) > 5) c.fire = false;
       // mines: drop them when being chased
       const mine = t.weapons.find((w) => w.id === 'mines' && w.ammo > 0);
       if (mine && dist < 22) {

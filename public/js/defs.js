@@ -30,14 +30,14 @@ export const TANK_TYPES = {
   },
   bulldog: {
     id: 'bulldog', name: 'Bulldog', role: 'Heavy', blurb: 'Brawler. Big gun, flamer, rams hard.',
-    hp: 180, speed: 12, reverse: 7, accel: 14, turn: 1.45, turret: 1.4, pitchSpeed: 0.6,
+    hp: 180, speed: 13, reverse: 7, accel: 16, turn: 1.45, turret: 1.4, pitchSpeed: 0.6,
     pitchMin: -0.08, pitchMax: 0.3, radius: 2.2, mass: 1.8, armor: 0.85,
     weapons: ['bigcannon', 'flame'], zoom: 2.2, scale: 1.15,
   },
   thumper: {
     id: 'thumper', name: 'Thumper', role: 'Artillery', blurb: 'Lobs mortars over cover. Keep away!',
-    hp: 90, speed: 14, reverse: 9, accel: 18, turn: 1.8, turret: 1.9, pitchSpeed: 0.7,
-    pitchMin: 0.12, pitchMax: 1.45, radius: 1.9, mass: 1.1, armor: 1.0,
+    hp: 105, speed: 14, reverse: 10, accel: 18, turn: 1.8, turret: 1.9, pitchSpeed: 0.9,
+    pitchMin: 0.0, pitchMax: 1.45, radius: 1.9, mass: 1.1, armor: 1.0,
     weapons: ['mortar', 'mg'], zoom: 2.0, scale: 1.0,
   },
   longshot: {
@@ -55,7 +55,7 @@ export const WEAPONS = {
   bigcannon: { id: 'bigcannon', name: 'Big Bertha', kind: 'shell', dmg: 42, splash: 5, splashDmg: 18, speed: 85, gravity: 9, reload: 1.7, maxAmmo: 30, spread: 0.004, recoil: 0.9, shake: 0.45, color: [1, 0.7, 0.3], icon: '⬤', size: 1.6 },
   mg: { id: 'mg', name: 'Machine Gun', kind: 'bullet', dmg: 4.5, speed: 170, gravity: 0, reload: 0.085, maxAmmo: 400, spread: 0.035, recoil: 0.05, shake: 0.03, color: [1, 1, 0.5], icon: '⋮', range: 110 },
   rockets: { id: 'rockets', name: 'Rockets', kind: 'rocket', dmg: 30, splash: 5, splashDmg: 14, speed: 48, gravity: 0, reload: 0.7, maxAmmo: 12, spread: 0.02, recoil: 0.2, shake: 0.15, homing: 2.2, color: [1, 0.5, 0.2], icon: '➤' },
-  mortar: { id: 'mortar', name: 'Mortar', kind: 'lob', dmg: 45, splash: 9, splashDmg: 30, speed: 55, gravity: 20, reload: 2.0, maxAmmo: 24, spread: 0.01, recoil: 0.6, shake: 0.3, color: [0.4, 0.4, 0.45], icon: '⌒' },
+  mortar: { id: 'mortar', name: 'Mortar', kind: 'lob', dmg: 48, splash: 9, splashDmg: 34, speed: 92, gravity: 56, reload: 2.0, maxAmmo: 24, spread: 0.01, recoil: 0.6, shake: 0.3, color: [0.4, 0.4, 0.45], icon: '⌒' },
   mines: { id: 'mines', name: 'Mines', kind: 'mine', dmg: 55, splash: 6, splashDmg: 25, reload: 0.9, maxAmmo: 5, armTime: 1.2, life: 60, color: [1, 0.2, 0.2], icon: '✱' },
   rail: { id: 'rail', name: 'Railgun', kind: 'rail', dmg: 60, reload: 2.4, maxAmmo: 10, range: 260, recoil: 0.8, shake: 0.35, color: [0.4, 1, 1], icon: '⚡' },
   flame: { id: 'flame', name: 'Flamer', kind: 'flame', dmg: 2.4, speed: 30, reload: 0.045, maxAmmo: 220, spread: 0.14, range: 17, recoil: 0, shake: 0.02, burn: 2.5, color: [1, 0.55, 0.1], icon: '♨' },

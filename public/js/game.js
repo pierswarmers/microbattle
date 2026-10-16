@@ -1008,7 +1008,13 @@ export class Game {
     let winner = null, reason = '';
     if (cfg.lives > 0) {
       const left = this.tanks.filter((t) => !t.eliminated);
-      if (left.length <= 1) { winner = left[0] || null; reason = 'Last tank standing'; }
+      if (left.length === 1) { winner = left[0]; reason = 'Last tank standing'; }
+      else if (left.length === 0) {
+        // everyone went down together: best score wins, otherwise it's a draw
+        const ranked = [...this.tanks].sort((a, b) => b.score - a.score);
+        winner = ranked[1] && ranked[0].score === ranked[1].score ? 'draw' : ranked[0];
+        reason = winner === 'draw' ? 'Mutual destruction — draw!' : 'Mutual destruction';
+      }
     }
     if (!winner && cfg.scoreLimit > 0) {
       const top = this.tanks.find((t) => t.score >= cfg.scoreLimit);
@@ -1338,7 +1344,7 @@ export class Game {
       const bob = Math.sin(p.spin * 2.2) * 0.35;
       const y = p.y + 1.6 + bob;
       let col;
-      if (p.kind === 'health') { M.health.add(m4.compose(m, p.x, y, p.z, p.spin * 1.2, 0, 0, 1.5)); col = [1, 0.35, 0.35]; }
+      if (p.kind === 'health') { M.health.add(m4.compose(m, p.x, y, p.z, p.spin * 1.2, 0, 0, 1.2), 1.15, 1.15, 1.15); col = [1, 0.35, 0.35]; }
       else if (p.kind === 'ammo') { M.ammo.add(m4.compose(m, p.x, y, p.z, p.spin * 1.2, 0, 0, 1.5)); col = [1, 0.85, 0.3]; }
       else if (p.kind === 'weapon') { M.wcrate.add(m4.compose(m, p.x, y, p.z, p.spin * 1.2, 0, 0, 1.5)); col = [1, 0.6, 0.2]; }
       else {
