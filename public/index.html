@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Micro Battle</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #8ec9ff; }
+    canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+    #hud { pointer-events: none; }
+    #loading, #err { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font: bold 28px "Trebuchet MS", sans-serif; color: #fff; text-shadow: 0 3px 0 #2a1033; }
+    #err { pointer-events: none; color: #ffdd33; font-size: 20px; padding: 40px; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="gl"></canvas>
+  <canvas id="hud"></canvas>
+  <div id="loading">Building the battlefield…</div>
+  <div id="err"></div>
+  <script src="config.js"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

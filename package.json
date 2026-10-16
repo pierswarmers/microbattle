@@ -1,0 +1,12 @@
+{
+  "name": "micro-battle",
+  "version": "1.0.0",
+  "description": "3D toy tank battles for up to four players and bots. Pure WebGL2 + WebAudio, no dependencies.",
+  "type": "module",
+  "bin": { "microbattle": "./microbattle.js" },
+  "scripts": {
+    "start": "node microbattle.js",
+    "shot": "node tools/shot.mjs"
+  },
+  "license": "MIT"
+}
