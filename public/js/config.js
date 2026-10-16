@@ -23,7 +23,7 @@ export const OPTIONS = {
   lobbyTimeout: [0, 'int', 'Auto-start the lobby after N seconds (0 = wait)'],
   split: [false, 'bool', "Birds-eye: give each human their own split-screen view"],
   zoom: [52, 'int', 'Birds-eye camera height (smaller = closer)'],
-  maxZoom: [140, 'int', 'Max birds-eye height when players spread out'],
+  maxZoom: [150, 'int', 'Max birds-eye height when players spread out'],
   stabilizer: [true, 'bool', 'Turret keeps its world aim while the hull turns'],
   mouse: [true, 'bool', 'Player 1 can aim with the mouse'],
   quality: ['medium', 'enum', 'Graphics quality', ['low', 'medium', 'high']],

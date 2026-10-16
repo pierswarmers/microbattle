@@ -48,6 +48,7 @@ export class Game {
     this.winner = null;
     this.firstBlood = false;
     this.fps = 60; this.frameMs = 16;
+    this.events = []; // sim-time scheduled callbacks (pause/fast-forward safe)
     // lobby slots: humans pre-joined from --players
     this.slots = [0, 1, 2, 3].map((i) => ({
       slot: i,
@@ -203,7 +204,7 @@ export class Game {
   }
 
   restart() {
-    this.projectiles = []; this.mines = []; this.beams = []; this.debris = []; this.drops = []; this.killfeed = []; this.announce = [];
+    this.projectiles = []; this.mines = []; this.beams = []; this.debris = []; this.drops = []; this.killfeed = []; this.announce = []; this.events = [];
     this.fx.parts = []; this.fx.decals = []; this.fx.texts = []; this.fx.tracks = [];
     for (const o of this.world.obstacles) if (o.kind === 'bush' || o.kind === 'crate' || o.kind === 'barrel' || o.kind === 'fence') { o.alive = true; o.hp = o.kind === 'crate' ? 30 : o.kind === 'barrel' ? 15 : 1; o.squash = 0; }
     this.world.buildNav();
@@ -212,8 +213,15 @@ export class Game {
     this.startMatch();
   }
 
+  /** Run fn after `delay` seconds of simulation time. */
+  later(delay, fn) { this.events.push({ t: this.time + delay, fn }); }
+
   step(dt) {
     this.time += dt;
+    if (this.events.length) {
+      const due = this.events.filter((e) => e.t <= this.time);
+      if (due.length) { this.events = this.events.filter((e) => e.t > this.time); for (const e of due) e.fn(); }
+    }
     this.world.updateAmbient(dt, this.time);
     this.fx.update(dt);
     this.shake = Math.max(0, this.shake - dt * 2.2);
@@ -278,12 +286,12 @@ export class Game {
     const c = { throttle: raw.throttle, turn: raw.turn, fire: raw.fire, aimYaw: t.aimYaw, aimPitch: t.aimPitch, weaponCycle: raw.cycle };
     const def = t.def;
     const commander = this.cfg.mode === 'commander';
-    // stabiliser off: turret follows hull rotation
-    if (raw.keyTurret) t.mouseAim = false;
+    const ms = this.input.mouse;
+    // keyboard/stick aiming takes over from the mouse until the mouse actually moves again
+    if (raw.keyTurret) { t.mouseAim = false; t.mouseBlock = ms.moved; }
     c.aimYaw += raw.turretRate * def.turret * 1.05 * dt;
     c.aimPitch += raw.pitchRate * def.pitchSpeed * dt;
     // mouse (player 1)
-    const ms = this.input.mouse;
     if (t.slot === 0 && this.cfg.mouse) {
       if (commander) {
         if (ms.clicked && !ms.locked) { this.input.requestLock(); ms.clicked = false; }
@@ -296,9 +304,10 @@ export class Game {
           if (ms.right) raw.zoom = true;
         }
       } else {
-        if (performance.now() - ms.moved < 2500 && !raw.keyTurret) t.mouseAim = true;
-        if (t.mouseAim && this.cams[0]) {
-          const hit = this.pickGround(this.cams[0], ms.x, ms.y);
+        if (ms.moved > (t.mouseBlock ?? -1e9) && performance.now() - ms.moved < 2500 && !raw.keyTurret) t.mouseAim = true;
+        const cam = this.cams.find((v) => v.tank === t) || this.cams.find((v) => v.tanks && v.tanks.includes(t)) || this.cams[0];
+        if (t.mouseAim && cam && ms.x >= cam.x && ms.x <= cam.x + cam.w && ms.y >= cam.y && ms.y <= cam.y + cam.h) {
+          const hit = this.pickGround(cam, ms.x, ms.y);
           if (hit) {
             const dx = hit[0] - t.x, dz = hit[2] - t.z;
             c.aimYaw = Math.atan2(dx, dz);
@@ -321,7 +330,9 @@ export class Game {
     // keep aim close to the actual turret so keyboard traverse doesn't wind up
     const lim = 0.6;
     const d = wrapAngle(c.aimYaw - t.turretYaw);
-    if (Math.abs(d) > lim && !t.mouseAim) c.aimYaw = t.turretYaw + Math.sign(d) * lim;
+    const mouseLook = commander && t.slot === 0 && ms.locked;
+    if (Math.abs(d) > lim && !t.mouseAim && !mouseLook) c.aimYaw = t.turretYaw + Math.sign(d) * lim;
+    if (mouseLook && Math.abs(d) > 2.6) c.aimYaw = t.turretYaw + Math.sign(d) * 2.6;
     c.aimPitch = clamp(c.aimPitch, def.pitchMin, def.pitchMax);
     return c;
   }
@@ -358,7 +369,7 @@ export class Game {
     if (c.weaponCycle) this.cycleWeapon(t);
     if (c.weapon && t.weapons[t.wi].id !== c.weapon) {
       const i = t.weapons.findIndex((w) => w.id === c.weapon);
-      if (i >= 0) t.wi = i;
+      if (i >= 0) { t.wi = i; t.cooldown = Math.min(t.cooldown, 0.25); }
     }
     // throttle with slope effect
     const fx = Math.sin(t.yaw), fz = Math.cos(t.yaw);
@@ -386,6 +397,7 @@ export class Game {
   }
 
   cycleWeapon(t) {
+    t.cooldown = Math.min(t.cooldown, 0.25); // each gun has its own loader: a quick swap is ready almost at once
     for (let k = 1; k <= t.weapons.length; k++) {
       const i = (t.wi + k) % t.weapons.length;
       if (t.weapons[i].ammo > 0 || k === t.weapons.length) { t.wi = i; break; }
@@ -481,7 +493,7 @@ export class Game {
     // engine sound for humans
     if (t.human) {
       const [vol, pan] = this.spatial(t.x, t.z);
-      this.sound.engine(t.id, this.state !== 'paused' && this.state !== 'over', Math.abs(t.speed) / def.speed, vol * 0.9, pan);
+      this.sound.engine(t.id, this.state !== 'paused' && this.state !== 'over', Math.min(1, Math.hypot(t.vx, t.vz) / def.speed), vol * 0.9, pan);
     }
   }
 
@@ -565,13 +577,16 @@ export class Game {
     const v = W.speed;
     const p = { kind: W.kind, owner: t, x: mx, y: my, z: mz, vx: dx * v, vy: dy * v, vz: dz * v, g: W.gravity || 0, dmg: W.dmg * dmgMul, splash: W.splash || 0, splashDmg: (W.splashDmg || 0) * dmgMul, life: W.kind === 'bullet' ? W.range / v : 8, age: 0, W, whistled: false };
     if (W.kind === 'rocket') {
-      p.target = this.lockTarget(t, 0.45, 140);
+      const skill = t.human ? 1 : (this.bots.find((b) => b.t === t)?.d.homing ?? 1);
+      p.target = this.lockTarget(t, 0.25 + 0.2 * skill, 140);
+      p.homing = p.W.homing * skill;
       p.life = 4;
       p.vx = dx * v * 0.5; p.vy = dy * v * 0.5 + 1.5; p.vz = dz * v * 0.5;
     }
     this.projectiles.push(p);
     const big = W.kind === 'shell' || W.kind === 'lob' ? (W.size || 1) * 1.2 : W.kind === 'rocket' ? 0.6 : 0.35;
-    this.fx.muzzle(mx, my, mz, dx, dy, dz, big, W.color);
+    const off = t.human && this.cfg.mode === 'commander' ? 2.2 : 0; // keep the flash out of the gunner's face
+    this.fx.muzzle(mx + dx * off, my + dy * off, mz + dz * off, dx, dy, dz, off ? big * 0.6 : big, W.color, !off);
     if (W.kind === 'shell' || W.kind === 'lob') {
       // kick up dust around the tank
       for (let i = 0; i < 4; i++) this.fx.dust(t.x + (Math.random() - 0.5) * 3, t.y, t.z + (Math.random() - 0.5) * 3, 1);
@@ -623,6 +638,8 @@ export class Game {
     t.mineCd = this.time + WEAPONS.mines.reload;
     t.cooldown = Math.max(t.cooldown, 0.2);
     const bx = t.x - Math.sin(t.yaw) * (t.radius + 1.5), bz = t.z - Math.cos(t.yaw) * (t.radius + 1.5);
+    const mine = this.mines.filter((m) => m.owner === t);
+    if (mine.length >= 6) this.mines.splice(this.mines.indexOf(mine[0]), 1);
     this.mines.push({ x: bx, z: bz, y: this.world.heightAt(bx, bz), owner: t, armT: WEAPONS.mines.armTime, life: WEAPONS.mines.life, dmg: WEAPONS.mines.dmg * (t.power.damage > 0 ? 2 : 1), blink: 0 });
     this.sfx('mine', bx, bz, 0.7);
   }
@@ -658,7 +675,7 @@ export class Game {
         if (p.target && p.target.alive && p.age > 0.15) {
           const tx = p.target.x - p.x, ty = p.target.y + 1.2 - p.y, tz = p.target.z - p.z, tl = Math.hypot(tx, ty, tz);
           const cl = Math.hypot(dx, dy, dz) || 1;
-          const k = p.W.homing * dt;
+          const k = (p.homing ?? p.W.homing) * dt;
           dx = dx / cl + (tx / tl) * k; dy = dy / cl + (ty / tl) * k; dz = dz / cl + (tz / tl) * k;
         }
         const l = Math.hypot(dx, dy, dz) || 1;
@@ -740,6 +757,16 @@ export class Game {
     this.fx.explode(x, y, z, size);
     this.sfx('explosion', x, z, Math.min(1.3, 0.6 + size * 0.3), { size });
     this.shakeAt(x, z, 0.25 * size + 0.1);
+    if (directDmg > 0) {
+      // the closest tank inside the blast takes the direct hit (mines, rockets that time out)
+      let best = null, bd = radius * 0.5;
+      for (const t of this.tanks) {
+        if (!t.alive || t === exclude) continue;
+        const d = Math.hypot(t.x - x, t.z - z) - t.radius;
+        if (d < bd) { bd = d; best = t; }
+      }
+      if (best) { this.damage(best, directDmg, owner, [best.x - x, 0, best.z - z], cause); exclude = best; }
+    }
     for (const t of this.tanks) {
       if (!t.alive || t === exclude) continue;
       const d = Math.hypot(t.x - x, t.z - z, (t.y + 1) - y);
@@ -787,7 +814,7 @@ export class Game {
       }
     } else if (o.kind === 'barrel') {
       // chain reaction!
-      setTimeout(() => this.explodeAt(o.x, o.y + 0.8, o.z, by, 0, 7, 40, 2.2, null, 'barrel'), 60 + Math.random() * 90);
+      this.later(0.06 + Math.random() * 0.09, () => this.explodeAt(o.x, o.y + 0.8, o.z, by, 0, 7, 40, 2.2, null, 'barrel'));
     }
     this.world.refreshNavAround(o.x, o.z, 6);
   }
@@ -814,7 +841,8 @@ export class Game {
     if (dir) { t.dmgDir = Math.atan2(-dir[0], -dir[2]); t.dmgT = 1.0; }
     if (!silent) {
       this.sfx('hit', t.x, t.z, 0.7);
-      this.fx.texts.push({ x: t.x, y: t.y + 3.5, z: t.z, text: '-' + Math.round(a), scale: 0.55, age: 0, life: 0.8, col: '#fff36b', rot: 0, small: true });
+      this.fx.texts.push({ x: t.x + (Math.random() - 0.5) * 2, y: t.y + 3.5, z: t.z, text: '-' + Math.round(a), scale: 0.55, age: 0, life: 0.8, col: '#fff36b', rot: 0, small: true });
+      if (this.fx.texts.length > 20) this.fx.texts.shift();
     }
     if (t.human && !silent) this.shake = Math.max(this.shake, Math.min(0.5, a / 60));
     if (t.hp <= 0) this.kill(t, by, cause);
@@ -964,7 +992,7 @@ export class Game {
     }
     if (ok) {
       t.stats.pickups++;
-      this.fx.popText(t.x, t.y + 4, t.z, label.text, 0.8, label.col);
+      this.fx.popText(t.x, t.y + 4, t.z, label.text, 0.8, label.col, true);
       this.fx.add({ k: 'shock', x: p.x, y: p.y + 0.4, z: p.z, life: 0.4, s0: 1, s1: 5, c0: [1, 1, 0.8], a: 0.9 });
       for (let i = 0; i < 12; i++) {
         const a = (i / 12) * Math.PI * 2;
@@ -987,19 +1015,33 @@ export class Game {
       if (top) { winner = top; reason = `First to ${cfg.scoreLimit}`; }
     }
     if (!winner && cfg.timeLimit > 0 && this.matchTime >= cfg.timeLimit) {
-      winner = [...this.tanks].sort((a, b) => b.score - a.score || a.deaths - b.deaths)[0];
-      reason = 'Time up';
+      const ranked = [...this.tanks].sort((a, b) => b.score - a.score || a.deaths - b.deaths);
+      const tie = ranked[1] && ranked[0].score === ranked[1].score && ranked[0].deaths === ranked[1].deaths;
+      winner = tie ? 'draw' : ranked[0];
+      reason = tie ? 'Time up — dead heat!' : 'Time up';
     }
     if (winner) {
       this.state = 'over';
       this.overT = 0;
-      this.winner = winner;
+      this.winner = winner === 'draw' ? null : winner;
       this.winReason = reason;
       this.sound.play('win', 0.8);
       this.sound.stopEngines();
       this.input.releaseLock();
-      for (let i = 0; i < 6; i++) setTimeout(() => winner.alive && this.fx.explode(winner.x + (Math.random() - 0.5) * 20, winner.y + 8 + Math.random() * 8, winner.z + (Math.random() - 0.5) * 20, 0.8, { text: i === 0 ? 'VICTORY!' : undefined }), i * 300);
+      if (this.winner) for (let i = 0; i < 10; i++) this.later(i * 0.35, () => winner.alive && this.fireworks(winner.x + (Math.random() - 0.5) * 24, winner.y + 12 + Math.random() * 10, winner.z + (Math.random() - 0.5) * 24, i === 0));
     }
+  }
+
+  fireworks(x, y, z, first) {
+    const cols = [[1, 0.3, 0.3], [0.3, 0.6, 1], [1, 0.9, 0.2], [0.4, 1, 0.5], [1, 0.4, 1]];
+    const c = cols[Math.floor(Math.random() * cols.length)];
+    for (let i = 0; i < 40; i++) {
+      const a = Math.random() * Math.PI * 2, e = Math.random() * Math.PI - Math.PI / 2, sp = 10 + Math.random() * 6;
+      this.fx.add({ k: 'spark', x, y, z, vx: Math.cos(a) * Math.cos(e) * sp, vy: Math.sin(e) * sp + 3, vz: Math.sin(a) * Math.cos(e) * sp, grav: 9, drag: 1.2, life: 1.1 + Math.random() * 0.5, w: 0.14, len: 0.8, c0: [1, 1, 1], c1: c, a: 1 });
+    }
+    this.fx.add({ k: 'glow', x, y, z, vx: 0, vy: 0, vz: 0, life: 0.25, s0: 1.5, s1: 4, c0: [1, 1, 1], c1: c, a: 1 });
+    if (first) this.fx.popText(x, y + 3, z, 'VICTORY!', 1.6, '#ffdd33', true);
+    this.sfx('explosion', x, z, 0.4, { size: 0.5 });
   }
 
   // ---------------- audio helpers ----------------
@@ -1037,8 +1079,16 @@ export class Game {
     const cfg = this.cfg;
     let subjects;
     if (this.state === 'lobby') return [{ x: 0, y: 0, w: W, h: H, kind: 'lobby', key: 'lobby' }];
+    if (this.state === 'over' && this.winner && this.overT > 0.4) return [{ x: 0, y: 0, w: W, h: H, kind: 'winner', tank: this.winner, tanks: [this.winner], key: 'winner' }];
     const humans = this.humans;
-    if (cfg.mode === 'birdseye' && !cfg.split && humans.length) return [{ x: 0, y: 0, w: W, h: H, kind: 'birds', tanks: humans, key: 'shared' }];
+    if (cfg.mode === 'birdseye' && !cfg.split && humans.length) {
+      // Micro Machines style shared screen; splits automatically when players are too far apart to share it
+      if (humans.length === 1) return [{ x: 0, y: 0, w: W, h: H, kind: 'birds', tanks: humans, key: 'shared' }];
+      const need = this.birdsFit(humans.filter((t) => !t.eliminated), W / H).h;
+      if (!this.autoSplit && need > cfg.maxZoom) this.autoSplit = true;
+      else if (this.autoSplit && need < cfg.maxZoom * 0.8) this.autoSplit = false;
+      if (!this.autoSplit) return [{ x: 0, y: 0, w: W, h: H, kind: 'birds', tanks: humans, key: 'shared' }];
+    }
     subjects = humans.length ? humans : this.tanks.slice(0, 4);
     const n = subjects.length;
     const rects = n === 1 ? [[0, 0, W, H]] : n === 2 ? [[0, 0, W / 2, H], [W / 2, 0, W / 2, H]] : [[0, 0, W / 2, H / 2], [W / 2, 0, W / 2, H / 2], [0, H / 2, W / 2, H / 2], [W / 2, H / 2, W / 2, H / 2]];
@@ -1046,6 +1096,41 @@ export class Game {
     if (n === 3) views.push({ x: W / 2, y: H / 2, w: W / 2, h: H / 2, kind: 'overview', tanks: this.tanks, key: 'overview' });
     return views;
   }
+
+  /** Birds-eye framing: smallest camera height that keeps every tank (plus margin) inside the view. */
+  birdsFit(tanks, aspect, minH = this.cfg.zoom, maxH = 600) {
+    let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9, cy = 0;
+    const list = tanks.length ? tanks : this.tanks;
+    for (const t of list) {
+      const lx = t.x + t.vx * 0.4, lz = t.z + t.vz * 0.4;
+      minX = Math.min(minX, lx); maxX = Math.max(maxX, lx); minZ = Math.min(minZ, lz); maxZ = Math.max(maxZ, lz); cy += t.y;
+    }
+    cy /= Math.max(1, list.length);
+    const fx = (minX + maxX) / 2, fz = (minZ + maxZ) / 2;
+    const vm = this._fitM || (this._fitM = [m4.create(), m4.create(), m4.create()]);
+    const fits = (h) => {
+      const z0 = this.birdsAnchor(fz, h);
+      m4.lookAt(vm[0], fx, cy + h, z0 + h * 0.5, fx, cy, z0 - h * 0.04);
+      m4.perspective(vm[1], (42 * Math.PI) / 180, aspect, 0.5, 900);
+      m4.multiply(vm[2], vm[1], vm[0]);
+      for (const t of list) for (const [ox, oz] of [[-6, -6], [6, 6], [-6, 6], [6, -6]]) {
+        const p = m4.transform(vm[2], t.x + ox, t.y + 2, t.z + oz, 1);
+        if (p[3] <= 0) return false;
+        if (Math.abs(p[0] / p[3]) > 0.82 || p[1] / p[3] > 0.72 || p[1] / p[3] < -0.62) return false;
+      }
+      return true;
+    };
+    let h = minH;
+    if (!fits(minH)) {
+      let lo = minH, hi = maxH;
+      for (let i = 0; i < 14; i++) { const mid = (lo + hi) / 2; if (fits(mid)) hi = mid; else lo = mid; }
+      h = hi;
+    }
+    return { fx, fz, cy, h };
+  }
+
+  /** The look-at point sits slightly ahead (north) so the tilted view is centred on the tanks. */
+  birdsAnchor(fz, h) { return fz + h * 0.06; }
 
   updateCamera(v, dt) {
     const prev = this.camState || (this.camState = {});
@@ -1060,26 +1145,34 @@ export class Game {
       fov = 50; fog = 0.002;
       v.focus = [0, 0, 0];
       v.camH = 70;
+    } else if (v.kind === 'winner') {
+      const t = v.tank;
+      st.yaw += dt * 0.35;
+      const R = 20;
+      eye = [t.x + Math.sin(st.yaw) * R, t.y + 9, t.z + Math.cos(st.yaw) * R];
+      at = [t.x, t.y - 1.5, t.z];
+      fov = 50; fog = 0.002;
+      v.focus = [t.x, t.y, t.z];
+      v.camH = 20;
     } else if (v.kind === 'birds' || v.kind === 'overview') {
       const list = v.tanks.filter((t) => t.alive || !t.eliminated);
-      let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9, cy = 0;
-      for (const t of list) {
-        const lx = t.x + t.vx * 0.5, lz = t.z + t.vz * 0.5;
-        minX = Math.min(minX, lx); maxX = Math.max(maxX, lx); minZ = Math.min(minZ, lz); maxZ = Math.max(maxZ, lz); cy += t.y;
-      }
-      if (!list.length) { minX = maxX = minZ = maxZ = 0; }
-      cy /= Math.max(1, list.length);
-      const fx = (minX + maxX) / 2, fz = (minZ + maxZ) / 2;
       const aspect = v.w / v.h;
-      const spread = Math.max(maxX - minX, (maxZ - minZ) * aspect * 0.8);
-      const minH = v.kind === 'overview' ? this.world.size * 0.75 : this.cfg.zoom;
-      const maxH = v.kind === 'overview' ? this.world.size * 0.75 : this.cfg.maxZoom;
-      const h = clamp(minH + spread * 0.62 / Math.min(aspect, 1.6) * 1.1, minH, maxH);
-      const k = st.init ? Math.min(1, dt * 2.5) : 1;
-      st.fx = lerp(st.fx, fx, k); st.fz = lerp(st.fz, fz, k); st.fy = lerp(st.fy, cy, k); st.h = lerp(st.h, h, st.init ? Math.min(1, dt * 1.2) : 1);
+      let fit;
+      if (v.kind === 'overview') { fit = { fx: 0, fz: 0, cy: 0, h: this.world.size * 0.75 }; }
+      else {
+        fit = this.birdsFit(list, aspect, this.cfg.zoom, Math.max(this.cfg.maxZoom, this.cfg.zoom));
+        // never zoom out past maxZoom for a single tank; shared views go as high as needed (split takes over beyond)
+        if (list.length <= 1) fit.h = this.cfg.zoom;
+        else fit.h = Math.min(fit.h, this.cfg.maxZoom * 1.15);
+      }
+      const k = st.init ? Math.min(1, dt * 3) : 1;
+      st.fx = lerp(st.fx, fit.fx, k); st.fz = lerp(st.fz, fit.fz, k); st.fy = lerp(st.fy, fit.cy, k);
+      // zoom out quickly (keep players on screen), zoom in gently
+      st.h = lerp(st.h, fit.h, st.init ? Math.min(1, dt * (fit.h > st.h ? 3 : 0.9)) : 1);
       st.init = true;
-      eye = [st.fx + sx * 3, st.fy + st.h + sy * 3, st.fz + st.h * 0.5 + sz * 3];
-      at = [st.fx + sx * 2, st.fy, st.fz - st.h * 0.04];
+      const z0 = this.birdsAnchor(st.fz, st.h);
+      eye = [st.fx + sx * 3, st.fy + st.h + sy * 3, z0 + st.h * 0.5 + sz * 3];
+      at = [st.fx + sx * 2, st.fy, z0 - st.h * 0.04];
       fov = 42;
       fog = 0.0009;
       v.focus = [st.fx, st.fy, st.fz];
@@ -1095,9 +1188,8 @@ export class Game {
         fov = 55;
       } else {
         st.yaw = t.turretYaw + Math.PI;
-        const G = t.geom, b = t.barrelM;
-        // gunner sight sits just above the barrel pivot
-        const px = b[12] + b[4] * 0.0, py = b[13] + G.sightY * t.scale, pz = b[14];
+        // gunner's sight sits just past the muzzle so the tank's own barrel never blocks the view
+        const px = t.muzzle[0] + t.dir[0] * 0.3, py = t.muzzle[1] + 0.35 * t.scale, pz = t.muzzle[2] + t.dir[2] * 0.3;
         const W = WEAPONS[t.weapons[t.wi].id];
         let dir = t.dir.slice();
         if (W.kind === 'lob') {
@@ -1107,7 +1199,7 @@ export class Game {
           if (imp) { const dx = imp[0] - px, dy = imp[1] - py, dz = imp[2] - pz, l = Math.hypot(dx, dy, dz); dir = [dx / l, dy / l, dz / l]; }
         }
         const kick = t.camKick * 0.04;
-        eye = [px - dir[0] * 0.6 + sx * 0.15, py + sy * 0.15, pz - dir[2] * 0.6 + sz * 0.15];
+        eye = [px + sx * 0.15, py + sy * 0.15, pz + sz * 0.15];
         at = [eye[0] + dir[0] * 10, eye[1] + (dir[1] + kick) * 10, eye[2] + dir[2] * 10];
         fov = t.zoom ? 58 / t.def.zoom : 58;
         near = 0.3;
@@ -1125,7 +1217,7 @@ export class Game {
     v.fogDensity = fog;
     v.sky = sky;
     v.listen = [eye[0], eye[2] - (v.kind === 'birds' ? (v.camH || 0) * 0.5 : 0)];
-    if (v.kind === 'birds' || v.kind === 'overview' || v.kind === 'lobby') {
+    if (v.kind === 'birds' || v.kind === 'overview' || v.kind === 'lobby' || v.kind === 'winner') {
       v.shadowCenter = [v.focus[0], v.focus[1], v.focus[2] - (v.camH || 60) * 0.1];
       v.shadowRadius = Math.min(220, (v.camH || 60) * 0.95);
       v.listen = [v.focus[0], v.focus[2]];
@@ -1162,7 +1254,7 @@ export class Game {
     const M = this.M;
     for (const mesh of r.meshes) if (!mesh.static) mesh.clear();
     const birds = this.cfg.mode === 'birdseye' || this.state === 'lobby';
-    this.world.drawDynamic(this.time, birds, views[0].camH || 60, views[0].focus || [0, 0, 0]);
+    this.world.drawDynamic(this.time, birds && views[0].kind !== 'winner', views[0].camH || 60, views[0].focus || [0, 0, 0], this.tanks);
     this.drawTanks();
     this.drawProjectiles();
     this.drawPickups();
@@ -1246,21 +1338,22 @@ export class Game {
       const bob = Math.sin(p.spin * 2.2) * 0.35;
       const y = p.y + 1.6 + bob;
       let col;
-      if (p.kind === 'health') { M.health.add(m4.compose(m, p.x, y, p.z, p.spin * 1.2, 0, 0, 1.15)); col = [1, 0.35, 0.35]; }
-      else if (p.kind === 'ammo') { M.ammo.add(m4.compose(m, p.x, y, p.z, p.spin * 1.2, 0, 0, 1.15)); col = [1, 0.85, 0.3]; }
-      else if (p.kind === 'weapon') { M.wcrate.add(m4.compose(m, p.x, y, p.z, p.spin * 1.2, 0, 0, 1.15)); col = [1, 0.6, 0.2]; }
+      if (p.kind === 'health') { M.health.add(m4.compose(m, p.x, y, p.z, p.spin * 1.2, 0, 0, 1.5)); col = [1, 0.35, 0.35]; }
+      else if (p.kind === 'ammo') { M.ammo.add(m4.compose(m, p.x, y, p.z, p.spin * 1.2, 0, 0, 1.5)); col = [1, 0.85, 0.3]; }
+      else if (p.kind === 'weapon') { M.wcrate.add(m4.compose(m, p.x, y, p.z, p.spin * 1.2, 0, 0, 1.5)); col = [1, 0.6, 0.2]; }
       else {
         const P = POWERUPS[p.sub];
         col = P.color;
-        M.gem.add(m4.compose(m, p.x, y + 0.3, p.z, p.spin * 2, 0, 0, 1.1), col[0] * 1.3, col[1] * 1.3, col[2] * 1.3);
+        M.gem.add(m4.compose(m, p.x, y + 0.3, p.z, p.spin * 2, 0, 0, 1.5), col[0] * 1.3, col[1] * 1.3, col[2] * 1.3);
         M.glow.add(m4.compose(m, p.x, y + 0.3, p.z, 0, 0, 0, 1.5 + Math.sin(p.spin * 6) * 0.2), col[0], col[1], col[2], 0.35);
       }
       const n = this.world.normalAt(p.x, p.z, [0, 1, 0]);
       alignToNormal(m, p.x, p.y + 0.1, p.z, n, p.spin, 2.2, 1, 2.2);
       M.teamRing.add(m, col[0], col[1], col[2], 0.6 + Math.sin(p.spin * 4) * 0.2);
-      // soft light pillar so pickups read from far away
-      m4.compose(m, p.x, p.y, p.z, 0, -Math.PI / 2, 0, 1.4, 1.4, 9);
-      M.beam.add(m, col[0], col[1], col[2], 0.12);
+      // soft light beacon so pickups read from far away
+      m4.compose(m, p.x, p.y + 0.1, p.z, p.spin * 0.5, 0, 0, 1.1, 10 + Math.sin(p.spin * 3) * 1.2, 1.1);
+      M.beacon.add(m, col[0] * 0.4, col[1] * 0.4, col[2] * 0.4, 1);
+      if (Math.random() < 0.08) this.fx.add({ k: 'glow', x: p.x + (Math.random() - 0.5) * 2, y: p.y + 0.5, z: p.z + (Math.random() - 0.5) * 2, vx: 0, vy: 3, vz: 0, life: 0.8, s0: 0.18, s1: 0.02, c0: [1, 1, 1], c1: col, a: 1 });
     }
     for (const d of this.drops) {
       const sw = Math.sin(d.sway * 1.5) * 0.15;

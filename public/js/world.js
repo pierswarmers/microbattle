@@ -30,6 +30,7 @@ export class World {
     this.buildWater();
     this.decorate();
     this.buildNav();
+    this.pickupSpots = this.pickupSpots.filter((p) => this.reachable(p.x, p.z));
   }
 
   // ---------- layout & heights ----------
@@ -82,6 +83,9 @@ export class World {
   rawHeight(x, z) {
     const n = this.noise, H = this.half;
     let h = (n.fbm(x * 0.011 + 50, z * 0.011 + 50, 4) - 0.5) * 16 + Math.sin(x * 0.031) * Math.cos(z * 0.027) * 2.2;
+    // natural hollows stay dry — only the hand-placed ponds hold water, so the map stays connected
+    const floor = WATER_LEVEL + 0.9;
+    if (h < floor) h = floor - (floor - h) * 0.08;
     const e = Math.max(Math.abs(x), Math.abs(z)) / H;
     // gently flatten spawns and farm
     for (const s of this.spawns) {
@@ -98,20 +102,24 @@ export class World {
         h = lerp(h, -4.5, k * 1.15 > 1 ? 1 : k * 1.15);
       }
     }
-    if (e > 0.84) { const k = (e - 0.84) / 0.16; h += k * k * 34 + n(x * 0.08, z * 0.08) * k * 6; }
+    if (e > 0.84) { const k = Math.min((e - 0.84) / 0.16, 1.6); h += k * k * 30 + n(x * 0.08, z * 0.08) * k * 6; }
     return h;
   }
 
   buildHeights() {
-    const C = (this.hc = 2);
-    const N = (this.hn = Math.round(this.size / C) + 1);
+    // the height grid extends past the playable area so the horizon is mountains, never a void
+    const C = (this.hc = 2.5);
+    this.ext = Math.ceil((this.half + 70) / C) * C;
+    const N = (this.hn = Math.round((2 * this.ext) / C) + 1);
     this.hgt = new Float32Array(N * N);
     this.pathD = new Float32Array(N * N);
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
-      const x = -this.half + i * C, z = -this.half + j * C;
-      const pd = this.pathDist(x, z);
+      const x = -this.ext + i * C, z = -this.ext + j * C;
+      const inside = Math.abs(x) < this.half && Math.abs(z) < this.half;
+      const pd = inside ? this.pathDist(x, z) : 99;
       let h = this.rawHeight(x, z);
-      if (pd < 6 && h > WATER_LEVEL + 0.4) h = lerp(h, h * 0.6 - 0.15, 1 - smooth(pd / 6));
+      // paths are slightly sunken dirt tracks, and become little causeways where they cross a pond
+      if (pd < 6) h = lerp(h, Math.max(h * 0.6 - 0.15, WATER_LEVEL + 0.75), 1 - smooth(pd / 6));
       this.hgt[j * N + i] = h;
       this.pathD[j * N + i] = pd;
     }
@@ -120,7 +128,7 @@ export class World {
   /** Height matching the rendered triangles exactly. */
   heightAt(x, z) {
     const C = this.hc, N = this.hn;
-    let fx = (x + this.half) / C, fz = (z + this.half) / C;
+    let fx = (x + this.ext) / C, fz = (z + this.ext) / C;
     fx = clamp(fx, 0, N - 1.001); fz = clamp(fz, 0, N - 1.001);
     const i = Math.floor(fx), j = Math.floor(fz);
     const u = fx - i, v = fz - j;
@@ -154,9 +162,9 @@ export class World {
     if (pd < 4.6) { const k = 1 - smooth(clamp((pd - 2.4) / 2.2, 0, 1)); c = [lerp(c[0], 0.78, k), lerp(c[1], 0.62, k), lerp(c[2], 0.4, k)]; }
     if (h < WATER_LEVEL + 0.9) { const k = clamp((WATER_LEVEL + 0.9 - h) / 0.8, 0, 1); c = [lerp(c[0], 0.95, k), lerp(c[1], 0.86, k), lerp(c[2], 0.6, k)]; }
     if (h < WATER_LEVEL - 0.6) c = [0.62, 0.62, 0.45];
-    if (slope > 0.45) { const k = clamp((slope - 0.45) * 3, 0, 1); c = [lerp(c[0], 0.62, k), lerp(c[1], 0.57, k), lerp(c[2], 0.5, k)]; }
-    if (h > 18) { const k = clamp((h - 18) / 4, 0, 1); c = [lerp(c[0], 1, k), lerp(c[1], 1, k), lerp(c[2], 1, k)]; }
-    const j = 0.96 + this.rng() * 0.08;
+    if (slope > 0.7) { const k = smooth(clamp((slope - 0.7) * 1.5, 0, 0.8)); c = [lerp(c[0], 0.58, k), lerp(c[1], 0.6, k), lerp(c[2], 0.42, k)]; }
+    if (h > 24) { const k = smooth(clamp((h - 24) / 8, 0, 1)); c = [lerp(c[0], 0.98, k), lerp(c[1], 0.98, k), lerp(c[2], 1, k)]; }
+    const j = 0.98 + this.rng() * 0.04;
     return [c[0] * j, c[1] * j, c[2] * j, 0];
   }
 
@@ -165,13 +173,14 @@ export class World {
   buildTerrainMesh() {
     const g = new Geo();
     const C = this.hc, N = this.hn;
-    const P = (i, j) => [-this.half + i * C, this.hgt[j * N + i], -this.half + j * C];
+    const E = this.ext;
+    const P = (i, j) => [-E + i * C, this.hgt[j * N + i], -E + j * C];
     // per-vertex colours give soft blends between grass, paths, sand and rock
     const cols = new Array(N * N);
     const H = (i, j) => this.hgt[clamp(j, 0, N - 1) * N + clamp(i, 0, N - 1)];
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
       const slope = Math.max(Math.abs(H(i + 1, j) - H(i - 1, j)), Math.abs(H(i, j + 1) - H(i, j - 1))) / (2 * C);
-      cols[j * N + i] = this.groundColor(-this.half + i * C, -this.half + j * C, this.hgt[j * N + i], this.pathD[j * N + i], slope);
+      cols[j * N + i] = this.groundColor(-E + i * C, -E + j * C, this.hgt[j * N + i], this.pathD[j * N + i], slope);
     }
     for (let j = 0; j < N - 1; j++) for (let i = 0; i < N - 1; i++) {
       const a = P(i, j), b = P(i + 1, j), c = P(i, j + 1), d = P(i + 1, j + 1);
@@ -315,7 +324,7 @@ export class World {
     });
 
     // --- trees: dense forests + scattered singles ---
-    const trees = [M.treeRound, M.treePine, M.treeBirch];
+    this.trees = [];
     const foliage = [[0.42, 0.78, 0.3], [0.32, 0.66, 0.28], [0.55, 0.82, 0.3], [0.95, 0.62, 0.2], [0.98, 0.42, 0.25], [0.8, 0.85, 0.3]];
     place(Math.round(340 * dens), 1.4, {
       gap: 2.2,
@@ -324,7 +333,7 @@ export class World {
       const kind = rng() < 0.45 ? 1 : rng() < 0.75 ? 0 : 2;
       const s = rng.range(0.9, 1.5);
       const col = rng() < 0.12 ? foliage[3 + Math.floor(rng() * 3)] : foliage[Math.floor(rng() * 3)];
-      trees[kind].add(m4.compose(m, x, h - 0.1, z, rng() * 6.28, 0, 0, s), col[0], col[1], col[2]);
+      this.trees.push({ kind, x, z, s, top: h + 7 * s, col, m: m4.compose(m4.create(), x, h - 0.1, z, rng() * 6.28, 0, 0, s) });
       this.addObstacle({ x, z, r: 0.7 * s, top: h + 7 * s, kind: 'tree' });
     });
     // backdrop trees on the border hills (no collision needed — unreachable)
@@ -334,7 +343,7 @@ export class World {
       const z = side === 0 ? d : side === 1 ? -d : t;
       const s = rng.range(1.2, 2.0);
       const col = foliage[Math.floor(rng() * 3)];
-      M.treePine.add(m4.compose(m, x, this.heightAt(x, z) - 0.2, z, rng() * 6.28, 0, 0, s), col[0] * 0.9, col[1] * 0.9, col[2] * 0.9);
+      M.treeBackdrop.add(m4.compose(m, x, this.heightAt(x, z) - 0.2, z, rng() * 6.28, 0, 0, s), col[0] * 0.9, col[1] * 0.9, col[2] * 0.9);
     }
 
     // --- giant mushrooms (whimsy!) ---
@@ -395,7 +404,7 @@ export class World {
       const x = rng.range(-H * 0.9, H * 0.9), z = rng.range(-H * 0.9, H * 0.9);
       const h = this.heightAt(x, z);
       if (h < WATER_LEVEL + 0.5 || h > 16 || this.pathDist(x, z) < 3) continue;
-      const s = rng.range(0.9, 1.9);
+      const s = rng.range(0.8, 1.4);
       const v = this.noise(x * 0.05 + 9, z * 0.05 + 3);
       M.grass.add(m4.compose(m, x, h - 0.05, z, rng() * 6.28, 0, 0, s, s * rng.range(0.8, 1.4), s), lerp(0.42, 0.6, v), lerp(0.75, 0.88, v), 0.3);
     }
@@ -445,6 +454,44 @@ export class World {
     const N = (this.navN = Math.ceil(this.size / C));
     this.nav = new Uint8Array(N * N);
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) this.nav[j * N + i] = this.navCellBlocked(i, j) ? 1 : 0;
+    this.markReachable();
+  }
+
+  /** Flood-fill from the first spawn; cells tanks can never reach are marked 2 so bots never target them. */
+  markReachable() {
+    const N = this.navN, C = this.navC, nav = this.nav;
+    for (const s of this.spawns) {
+      // guarantee every spawn connects: open a corridor along its path to the centre
+      const i = clamp(Math.floor((s.x + this.half) / C), 0, N - 1), j = clamp(Math.floor((s.z + this.half) / C), 0, N - 1);
+      nav[j * N + i] = 0;
+    }
+    const seen = new Uint8Array(N * N);
+    const s0 = this.spawns[0];
+    const start = clamp(Math.floor((s0.z + this.half) / C), 0, N - 1) * N + clamp(Math.floor((s0.x + this.half) / C), 0, N - 1);
+    const stack = [start];
+    seen[start] = 1;
+    while (stack.length) {
+      const c = stack.pop();
+      const ci = c % N, cj = (c / N) | 0;
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const ni = ci + di, nj = cj + dj;
+        if (ni < 0 || nj < 0 || ni >= N || nj >= N) continue;
+        const k = nj * N + ni;
+        if (seen[k] || nav[k]) continue;
+        seen[k] = 1;
+        stack.push(k);
+      }
+    }
+    let lost = 0;
+    for (let k = 0; k < N * N; k++) if (!nav[k] && !seen[k]) { nav[k] = 2; lost++; }
+    this.unreachableCells = lost;
+  }
+
+  reachable(x, z) {
+    const C = this.navC, N = this.navN;
+    const i = Math.floor((x + this.half) / C), j = Math.floor((z + this.half) / C);
+    if (i < 0 || j < 0 || i >= N || j >= N) return false;
+    return this.nav[j * N + i] === 0;
   }
 
   navCellBlocked(i, j) {
@@ -573,8 +620,22 @@ export class World {
     }
   }
 
-  drawDynamic(time, birdsEye, camH, focus) {
+  drawDynamic(time, birdsEye, camH, focus, tanks = []) {
     const M = this.M, m = this.tmpM;
+    const solid = [M.treeRound, M.treePine, M.treeBirch], ghost = [M.treeRoundG, M.treePineG, M.treeBirchG];
+    for (const t of this.trees) {
+      let hide = false;
+      if (birdsEye) {
+        // the camera sits south (+z) and above: a tree just south of a tank hides it
+        for (const k of tanks) {
+          if (!k.alive) continue;
+          const dz = t.z - k.z, dx = Math.abs(t.x - k.x);
+          if (dx < 3.6 * t.s && dz > -2.5 && dz < 5.5 * t.s) { hide = true; break; }
+        }
+      }
+      if (hide) ghost[t.kind].add(t.m, t.col[0], t.col[1], t.col[2], 0.28);
+      else solid[t.kind].add(t.m, t.col[0], t.col[1], t.col[2]);
+    }
     for (const o of this.bushes) {
       if (!o.alive) continue;
       const sq = 1 - o.squash * 0.5;
@@ -596,13 +657,6 @@ export class World {
     for (const b of this.ambient.blades) M.blades.add(m4.compose(m, b.x, b.y, b.z, b.yaw, 0, b.a));
     if (!birdsEye) {
       for (const c of this.ambient.clouds) M.cloud.add(m4.compose(m, c.x, c.y, c.z, 0, 0, 0, c.s * 1.6, c.s, c.s * 1.6));
-    } else {
-      // a few low wispy clouds drifting between camera and ground for parallax
-      for (let i = 0; i < 4; i++) {
-        const c = this.ambient.clouds[i];
-        const y = camH * 0.62;
-        M.cloudGhost.add(m4.compose(m, c.x * 0.6, focus[1] + y, c.z * 0.6, 0, 0, 0, c.s * 1.5, c.s * 0.6, c.s * 1.5), 1, 1, 1, 0.13);
-      }
     }
     for (const b of this.ambient.birds) {
       const a = time * b.sp - b.off * Math.sign(b.sp) * 4;

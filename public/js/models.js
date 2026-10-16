@@ -407,9 +407,15 @@ export function createModels(r, rng) {
     };
   }
   M.terrain = null; // set by world
-  M.treeRound = new Mesh(r, tree('round', rng), { static: true, sway: 0.0035, capacity: 512 });
-  M.treePine = new Mesh(r, tree('pine', rng), { static: true, sway: 0.0035, capacity: 512 });
-  M.treeBirch = new Mesh(r, tree('birch', rng), { static: true, sway: 0.003, capacity: 256 });
+  // trees are re-submitted each frame so ones hiding a tank can be drawn see-through in birds-eye view
+  const tr = tree('round', rng), tp = tree('pine', rng), tb = tree('birch', rng);
+  M.treeRound = new Mesh(r, tr, { sway: 0.0035, capacity: 512 });
+  M.treePine = new Mesh(r, tp, { sway: 0.0035, capacity: 512 });
+  M.treeBirch = new Mesh(r, tb, { sway: 0.003, capacity: 256 });
+  M.treeRoundG = new Mesh(r, tr, { sway: 0.0035, capacity: 32, transparent: true, castShadow: false, layer: 8 });
+  M.treePineG = new Mesh(r, tp, { sway: 0.0035, capacity: 32, transparent: true, castShadow: false, layer: 8 });
+  M.treeBirchG = new Mesh(r, tb, { sway: 0.003, capacity: 32, transparent: true, castShadow: false, layer: 8 });
+  M.treeBackdrop = new Mesh(r, tp, { static: true, sway: 0.0035, capacity: 512 });
   M.bush = new Mesh(r, bush(rng), { capacity: 256 });
   M.rock = new Mesh(r, rock(rng), { static: true, capacity: 256 });
   M.mushroom = new Mesh(r, mushroom(rng), { static: true, capacity: 64 });
@@ -444,6 +450,7 @@ export function createModels(r, rng) {
   M.shell = new Mesh(r, new Geo().sphere(0, 0, 0, 1, 1, [0.25, 0.25, 0.25, 1], 0, rng, 1), { capacity: 64 });
   M.chunk = new Mesh(r, unitBox, { capacity: 256 });
   M.puff = new Mesh(r, unitSphere, { capacity: 1024, transparent: true, castShadow: false, layer: 5 });
+  M.fire = new Mesh(r, unitSphere, { capacity: 1024, transparent: true, mode: 3, castShadow: false, layer: 5 });
   M.glow = new Mesh(r, lowSphere, { capacity: 1024, transparent: true, additive: true, mode: 1, castShadow: false, layer: 6 });
   M.spark = new Mesh(r, zBox, { capacity: 1024, transparent: true, additive: true, mode: 1, castShadow: false, layer: 6 });
   M.beam = new Mesh(r, zBox, { capacity: 32, transparent: true, additive: true, mode: 1, castShadow: false, layer: 7 });
@@ -452,6 +459,16 @@ export function createModels(r, rng) {
   M.track = new Mesh(r, new Geo().box(0, 0, 0, 1, 0.01, 1, [1, 1, 1, 1]), { capacity: 2048, transparent: true, castShadow: false, layer: 1, mode: 1 });
   M.teamRing = new Mesh(r, new Geo().ring(0, 0, 0, 0.82, 1, 28, [1, 1, 1, 1]), { capacity: 16, transparent: true, castShadow: false, layer: 2, mode: 1, cull: false });
   M.bubble = new Mesh(r, unitSphere, { capacity: 8, transparent: true, additive: true, mode: 1, castShadow: false, layer: 8, cull: false });
+  // light beacon over pickups: bright at the base, fading to nothing at the top (additive)
+  const cone = new Geo();
+  for (let i = 0; i < 12; i++) {
+    const a0 = (i / 12) * Math.PI * 2, a1 = ((i + 1) / 12) * Math.PI * 2;
+    const b0 = [Math.cos(a0), 0, Math.sin(a0)], b1 = [Math.cos(a1), 0, Math.sin(a1)];
+    const t0 = [Math.cos(a0) * 0.25, 1, Math.sin(a0) * 0.25], t1 = [Math.cos(a1) * 0.25, 1, Math.sin(a1) * 0.25];
+    cone.triC(b0, t0, t1, [1, 1, 1, 1], [0, 0, 0, 1], [0, 0, 0, 1]);
+    cone.triC(b0, t1, b1, [1, 1, 1, 1], [0, 0, 0, 1], [1, 1, 1, 1]);
+  }
+  M.beacon = new Mesh(r, cone, { capacity: 64, transparent: true, additive: true, mode: 1, cull: false, castShadow: false, layer: 7 });
   M.dash = new Mesh(r, zBox, { capacity: 256, transparent: true, mode: 1, castShadow: false, layer: 7 });
   return M;
 }

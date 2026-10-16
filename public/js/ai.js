@@ -4,9 +4,9 @@ import { WEAPONS } from './defs.js';
 import { wrapAngle, clamp } from './math.js';
 
 const DIFFICULTY = {
-  easy: { aimErr: 0.11, react: 0.9, lead: 0.3, turretMul: 0.6, sense: 90, fireTol: 1.6 },
-  normal: { aimErr: 0.045, react: 0.45, lead: 0.75, turretMul: 0.85, sense: 130, fireTol: 1.1 },
-  hard: { aimErr: 0.015, react: 0.18, lead: 1.0, turretMul: 1.0, sense: 180, fireTol: 0.8 },
+  easy: { aimErr: 0.11, react: 0.9, lead: 0.3, turretMul: 0.6, sense: 90, fireTol: 1.6, homing: 0.3 },
+  normal: { aimErr: 0.045, react: 0.45, lead: 0.75, turretMul: 0.85, sense: 130, fireTol: 1.1, homing: 0.6 },
+  hard: { aimErr: 0.015, react: 0.18, lead: 1.0, turretMul: 1.0, sense: 180, fireTol: 0.8, homing: 1.0 },
 };
 
 /** Preferred engagement distance per tank type — this is what makes bots play each style. */
@@ -79,7 +79,7 @@ export class Bot {
     const near = (kind, maxD) => {
       let best = null, bd = maxD;
       for (const p of g.pickups) {
-        if (!p.active || (kind && p.kind !== kind)) continue;
+        if (!p.active || (kind && p.kind !== kind) || p.unreachable > g.time) continue;
         const d = Math.hypot(p.x - t.x, p.z - t.z);
         if (d < bd) { bd = d; best = p; }
       }
@@ -93,7 +93,8 @@ export class Bot {
       const pp = near('power', 22) || near('weapon', 18);
       if (pp) p = pp;
     }
-    if (p) { this.goal = [p.x, p.z]; this.goalKind = 'pickup'; return; }
+    if (p) { this.goal = [p.x, p.z]; this.goalKind = 'pickup'; this.goalPickup = p; return; }
+    this.goalPickup = null;
     const e = this.target;
     if (e) {
       const dx = t.x - e.x, dz = t.z - e.z, d = Math.hypot(dx, dz) || 1;
@@ -109,6 +110,7 @@ export class Bot {
     if (!this.goal || this.goalKind !== 'wander' || this.wanderT <= 0 || Math.hypot(this.goal[0] - t.x, this.goal[1] - t.z) < 8) {
       const spots = g.world.pickupSpots;
       const s = spots[Math.floor(Math.random() * spots.length)];
+      this.goalPickup = null;
       this.goal = s ? [s.x, s.z] : [0, 0];
       this.goalKind = 'wander';
       this.wanderT = 12;
@@ -125,8 +127,8 @@ export class Bot {
       switch (W.kind) {
         case 'flame': s = dist < 14 ? 90 : -100; break;
         case 'bullet': s = dist < 60 ? 40 : dist < 100 ? 10 : -50; break;
-        case 'shell': s = dist < 110 ? 50 : 15; break;
-        case 'rocket': s = dist > 15 && dist < 90 ? 60 : 5; break;
+        case 'shell': s = dist < 110 ? 55 : 15; break;
+        case 'rocket': s = dist > 20 && dist < 90 ? (Math.hypot(this.target?.vx || 0, this.target?.vz || 0) > 7 ? 62 : 48) : 5; break;
         case 'lob': s = !los ? 70 : dist > 30 ? 45 : -60; break;
         case 'rail': s = dist > 25 ? 75 : 35; break;
         case 'mine': s = -200; break;
@@ -158,7 +160,16 @@ export class Bot {
       const goalMoved = !this.pathGoal || Math.hypot(this.pathGoal[0] - goal[0], this.pathGoal[1] - goal[1]) > 8;
       if (!this.path || this.pathT <= 0 || goalMoved) {
         if (g.world.navLineClear(t.x, t.z, goal[0], goal[1])) this.path = [goal];
-        else this.path = g.world.findPath(t.x, t.z, goal[0], goal[1]) || [goal];
+        else {
+          this.path = g.world.findPath(t.x, t.z, goal[0], goal[1], 12000);
+          if (!this.path) {
+            // unreachable goal: remember it and choose something else instead of ramming the shoreline
+            if (this.goalPickup) this.goalPickup.unreachable = g.time + 20;
+            this.goal = null; this.wanderT = 0; this.goalKind = 'wander';
+            this.chooseGoal();
+            this.path = [this.goal || [t.x, t.z]];
+          }
+        }
         this.pathGoal = goal.slice();
         this.pathT = 1.5 + Math.random() * 0.5;
       }
@@ -167,10 +178,21 @@ export class Bot {
       steerX = wp[0] - t.x; steerZ = wp[1] - t.z;
       const dist = Math.hypot(steerX, steerZ);
       if (this.goalKind === 'fight' && dist < 3) { steerX = 0; steerZ = 0; }
-      // retreat by reversing when the target is too close and we're a long-range tank
+      // long-range tanks back away to keep their preferred distance
       if (this.target && this.style.flee > 0.3) {
         const dT = Math.hypot(this.target.x - t.x, this.target.z - t.z);
-        if (dT < this.style.range * 0.4) wantReverse = true;
+        if (dT < this.style.range * 0.65) {
+          wantReverse = true;
+          steerX = t.x - this.target.x; steerZ = t.z - this.target.z;
+        }
+      }
+      // brawlers charge in for the ram once close
+      if (this.target && t.def.id === 'bulldog') {
+        const dT = Math.hypot(this.target.x - t.x, this.target.z - t.z);
+        if (dT < 16 && g.world.navLineClear(t.x, t.z, this.target.x, this.target.z)) {
+          steerX = this.target.x - t.x; steerZ = this.target.z - t.z;
+          this.charging = true;
+        } else this.charging = false;
       }
     }
 
@@ -184,12 +206,15 @@ export class Bot {
       let reverse = false;
       if (wantReverse) {
         const back = wrapAngle(desired + Math.PI - fwdYaw);
-        if (Math.abs(back) < 1.2) { reverse = true; desired = desired + Math.PI; }
+        // steerX/Z already points away from the threat; reverse if that is roughly behind us
+        const away = wrapAngle(desired - fwdYaw);
+        if (Math.abs(away) > 1.9) { reverse = true; desired = desired + Math.PI; }
+        else if (Math.abs(back) < 1.2) { reverse = true; desired = desired + Math.PI; }
       }
       const diff = wrapAngle(desired - fwdYaw);
       turn = clamp(diff * 2.2, -1, 1) + avoid;
       throttle = reverse ? -1 : Math.abs(diff) > 1.3 ? 0.15 : Math.abs(diff) > 0.6 ? 0.6 : 1;
-      if (this.goalKind === 'fight' && Math.hypot(steerX, steerZ) < 6) throttle *= 0.4;
+      if (this.goalKind === 'fight' && Math.hypot(steerX, steerZ) < 6 && !this.charging) throttle *= 0.4;
     }
     turn = clamp(turn, -1, 1);
 
@@ -219,7 +244,12 @@ export class Bot {
       if (this.thinkT === 0.35 || !c.weapon) c.weapon = this.chooseWeapon(dist, los) || t.weapons[0].id;
       const W = WEAPONS[c.weapon];
       const v = W.speed || 200;
-      const tFlight = W.kind === 'lob' ? dist / (v * 0.55) : dist / v;
+      let tFlight = dist / v;
+      if (W.kind === 'lob' || W.kind === 'shell') {
+        // flight time from the solved launch angle (a high mortar arc is slow!)
+        const p0 = ballisticPitch(v, W.gravity, dist, 0, W.kind === 'lob');
+        tFlight = dist / (v * Math.max(0.15, Math.cos(p0)));
+      }
       const lead = W.kind === 'rail' || W.kind === 'rocket' ? 0 : this.d.lead;
       const px = e.x + e.vx * tFlight * lead, pz = e.z + e.vz * tFlight * lead;
       const pdx = px - t.x, pdz = pz - t.z, pd = Math.hypot(pdx, pdz);

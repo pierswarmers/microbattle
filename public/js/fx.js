@@ -27,13 +27,16 @@ export class FX {
   explode(x, y, z, size = 1, opts = {}) {
     const R = Math.random;
     const s = size;
-    this.add({ k: 'glow', x, y: y + 0.5, z, vx: 0, vy: 0, vz: 0, life: 0.14, s0: 2.6 * s, s1: 4.2 * s, c0: [1, 1, 0.9], c1: [1, 0.85, 0.4], a: 1 });
+    // quick bright flash (additive, kept dim enough not to blow out to white)
+    this.add({ k: 'glow', x, y: y + 0.5, z, vx: 0, vy: 0, vz: 0, life: 0.1, s0: 2.0 * s, s1: 3.6 * s, c0: [0.7, 0.55, 0.25], c1: [0.5, 0.25, 0.05], a: 1 });
+    // chunky cartoon fireballs: solid yellow cores rolling out into orange and red, then into smoke
     const nFire = Math.round(7 + 6 * s);
     for (let i = 0; i < nFire; i++) {
       const a = R() * Math.PI * 2, e = R() * 0.9 + 0.2, sp = (3 + R() * 6) * s;
-      this.add({ k: 'glow', x, y: y + 0.5, z, vx: Math.cos(a) * Math.cos(e) * sp, vy: Math.sin(e) * sp * 0.9 + 2, vz: Math.sin(a) * Math.cos(e) * sp, drag: 3.5,
-        life: 0.35 + R() * 0.45, s0: (0.9 + R() * 0.8) * s, s1: (1.8 + R() * 1.2) * s, c0: [1, 0.95, 0.4], c1: [1, 0.3, 0.05], a: 1 });
+      this.add({ k: 'fire', x, y: y + 0.5, z, vx: Math.cos(a) * Math.cos(e) * sp, vy: Math.sin(e) * sp * 0.9 + 2, vz: Math.sin(a) * Math.cos(e) * sp, drag: 3.5, rise: 2,
+        life: 0.45 + R() * 0.45, s0: (0.9 + R() * 0.8) * s, s1: (1.7 + R() * 1.1) * s, c0: [1, 0.92, 0.35], c1: [0.85, 0.18, 0.05], a: 1 });
     }
+    for (let i = 0; i < 3; i++) this.add({ k: 'fire', x: x + (R() - 0.5) * s, y: y + 0.8, z: z + (R() - 0.5) * s, vx: 0, vy: 3 + R() * 2, vz: 0, drag: 2, life: 0.35, s0: 1.6 * s, s1: 2.4 * s, c0: [1, 1, 0.75], c1: [1, 0.55, 0.1], a: 1 });
     const nSmoke = Math.round(6 + 7 * s);
     for (let i = 0; i < nSmoke; i++) {
       const a = R() * Math.PI * 2, sp = (1 + R() * 3) * s;
@@ -69,10 +72,10 @@ export class FX {
     this.add({ k: 'puff', x, y, z, vx: 0, vy: 1.5, vz: 0, life: 0.6, s0: 0.3, s1: 1.1, c0: [0.75, 0.7, 0.6], c1: [0.8, 0.8, 0.8], a: 0.7 });
   }
 
-  muzzle(x, y, z, dx, dy, dz, size = 1, col = [1, 0.85, 0.4]) {
+  muzzle(x, y, z, dx, dy, dz, size = 1, col = [1, 0.85, 0.4], smoke = true) {
     const R = Math.random;
     this.add({ k: 'glow', x: x + dx * 0.4, y: y + dy * 0.4, z: z + dz * 0.4, vx: dx * 4, vy: dy * 4, vz: dz * 4, life: 0.09, s0: 0.7 * size, s1: 1.1 * size, c0: [1, 1, 0.8], c1: col, a: 1 });
-    for (let i = 0; i < 2 * size; i++) {
+    if (smoke) for (let i = 0; i < 2 * size; i++) {
       const sp = 5 + R() * 5;
       this.add({ k: 'puff', x: x + dx, y: y + dy, z: z + dz, vx: dx * sp + (R() - 0.5) * 2, vy: dy * sp + 1.2, vz: dz * sp + (R() - 0.5) * 2, drag: 2.5, rise: 0.8, life: 0.5 + R() * 0.4, s0: 0.25 * size, s1: 1.0 * size, c0: [0.9, 0.9, 0.9], c1: [0.95, 0.95, 0.95], a: 0.35 });
     }
@@ -126,7 +129,10 @@ export class FX {
     if (this.tracks.length > 1600) this.tracks.splice(0, 100);
   }
 
-  popText(x, y, z, text, scale = 1, col = null) {
+  popText(x, y, z, text, scale = 1, col = null, force = false) {
+    // avoid stacking several words on the same spot
+    if (!force && this.texts.some((t) => !t.small && t.age < 0.8 && Math.hypot(t.x - x, t.z - z) < 8)) return;
+    x += (Math.random() - 0.5) * 3; z += (Math.random() - 0.5) * 3;
     this.texts.push({ x, y, z, text, scale, age: 0, life: 1.1, col: col || TEXT_COLS[Math.floor(Math.random() * TEXT_COLS.length)], rot: (Math.random() - 0.5) * 0.4 });
     if (this.texts.length > 20) this.texts.shift();
   }
@@ -149,7 +155,7 @@ export class FX {
           p.y = g + p.s0 * 0.5;
           if (p.bounce && p.vy < -3) { p.vy *= -0.35; p.vx *= 0.6; p.vz *= 0.6; } else { p.vy = 0; p.vx *= 0.8; p.vz *= 0.8; p.wx *= 0.8; p.wy *= 0.8; }
         }
-      } else if (p.k === 'spark' || p.k === 'puff') {
+      } else if (p.k === 'spark' || p.k === 'puff' || p.k === 'fire') {
         const g = W.heightAt(p.x, p.z);
         if (p.y < g) { p.y = g; p.vy = Math.abs(p.vy) * 0.2; }
       }
@@ -165,13 +171,14 @@ export class FX {
     for (const p of this.parts) {
       if (p.delay > 0) continue;
       const t = p.age / p.life;
-      if (p.k === 'glow' || p.k === 'puff') {
+      if (p.k === 'glow' || p.k === 'puff' || p.k === 'fire') {
         const s = lerp(p.s0, p.s1, Math.sqrt(t));
         const c0 = p.c0, c1 = p.c1;
         const r = lerp(c0[0], c1[0], t), g = lerp(c0[1], c1[1], t), b = lerp(c0[2], c1[2], t);
-        const a = p.a * (p.k === 'glow' ? 1 - t * t : 1 - t);
-        m4.compose(m, p.x, p.y, p.z, p.age * 2, p.age, 0, s);
-        (p.k === 'glow' ? M.glow : M.puff).add(m, r, g, b, a);
+        const a = p.a * (p.k === 'puff' ? 1 - t : p.k === 'fire' ? (t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3) : 1 - t * t);
+        const sc = p.k === 'fire' && t > 0.75 ? s * (1 - (t - 0.75) * 2) : s;
+        m4.compose(m, p.x, p.y, p.z, p.age * 2, p.age, 0, sc);
+        (p.k === 'glow' ? M.glow : p.k === 'fire' ? M.fire : M.puff).add(m, r, g, b, a);
       } else if (p.k === 'spark') {
         const sp = Math.hypot(p.vx, p.vy, p.vz) || 1;
         const yaw = Math.atan2(p.vx, p.vz), pitch = -Math.asin(clamp(p.vy / sp, -1, 1));

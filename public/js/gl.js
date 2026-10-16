@@ -91,6 +91,14 @@ void main() {
     outCol = vCol;
     return;
   }
+  if (uMode == 3) { // toon fire: self-lit but still shaded so fireballs read as round puffs
+    vec3 nn = normalize(vNor);
+    float l = max(dot(nn, uSunDir), 0.0);
+    vec3 vv = normalize(uCamPos - vWorld);
+    float rim = pow(1.0 - max(dot(nn, vv), 0.0), 2.0);
+    outCol = vec4(vCol.rgb * (0.62 + 0.5 * smoothstep(0.0, 0.7, l)) + vec3(0.25, 0.12, 0.0) * rim, vCol.a);
+    return;
+  }
   vec3 n = normalize(vNor);
   if (!gl_FrontFacing) n = -n;
   float ndl = max(dot(n, uSunDir), 0.0);

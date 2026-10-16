@@ -67,7 +67,7 @@ export class HUD {
     if (g.state === 'paused') this.drawPause(W, H);
     if (g.state === 'over') this.drawGameOver(W, H);
     if (g.cfg.debug || g.cfg.fps) this.label(8, H - 8, `${g.fps.toFixed(0)} fps · ${g.fx.parts.length} particles · ${g.projectiles.length} proj`, 12, '#fff', 'left', 'bottom');
-    if (!g.audioStarted && g.state !== 'over') this.label(W / 2, H - 40, '🔊 press any key or click to enable sound', 14, 'rgba(255,255,255,0.85)', 'center');
+    if (!g.audioStarted && g.state !== 'over') this.label(W / 2, 64, '🔊 press any key or click to enable sound', 13, 'rgba(255,255,255,0.85)', 'center');
   }
 
   // ---------- primitives ----------
@@ -149,6 +149,15 @@ export class HUD {
       ctx.fillStyle = tx.col; ctx.fillText(tx.text, 0, 0);
       ctx.restore();
     }
+    // pickup icons from above
+    if (birds && v.kind !== 'overview') for (const p of g.pickups) {
+      if (!p.active) continue;
+      const q = this.project(v, p.x, p.y + 4.2, p.z);
+      if (!q || Math.abs(q.nx) > 1 || Math.abs(q.ny) > 1) continue;
+      const icon = p.kind === 'health' ? '❤️' : p.kind === 'ammo' ? '🧨' : p.kind === 'weapon' ? '🔫' : { speed: '⚡', shield: '🛡️', damage: '💪', rapid: '🔥', ghost: '👻' }[p.sub];
+      ctx.font = '16px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(icon, q.x, q.y + Math.sin(p.spin * 2.2) * 3);
+    }
     // airdrop markers
     for (const d of g.drops) {
       const p = this.project(v, d.x, d.y + 9, d.z);
@@ -188,21 +197,21 @@ export class HUD {
     const g = this.g, ctx = this.ctx, t = v.tank;
     if (!t.alive) return;
     const cx = v.x + v.w / 2, cy = v.y + v.h / 2;
-    const R = Math.min(v.w, v.h) * 0.46;
+    const R = Math.min(v.w, v.h) * 0.45;
     const W = WEAPONS[t.weapons[t.wi].id];
     // vignette mask
     ctx.save();
     ctx.beginPath();
     ctx.rect(v.x, v.y, v.w, v.h);
-    ctx.ellipse(cx, cy, R * 1.25, R, 0, 0, Math.PI * 2, true);
+    ctx.arc(cx, cy, R, 0, Math.PI * 2, true);
     ctx.fillStyle = 'rgba(14,18,24,0.88)';
     ctx.fill('evenodd');
     const grad = ctx.createRadialGradient(cx, cy, R * 0.7, cx, cy, R * 1.05);
     grad.addColorStop(0, 'rgba(0,0,0,0)'); grad.addColorStop(1, 'rgba(0,0,0,0.45)');
     ctx.fillStyle = grad;
-    ctx.beginPath(); ctx.ellipse(cx, cy, R * 1.25, R, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = t.css; ctx.lineWidth = 4;
-    ctx.beginPath(); ctx.ellipse(cx, cy, R * 1.25, R, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
     ctx.restore();
     // reticle
     const col = 'rgba(255,255,255,0.92)';
@@ -210,8 +219,8 @@ export class HUD {
     const ry = cy;
     ctx.strokeStyle = col; ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(cx - R * 0.9, ry); ctx.lineTo(cx - 26, ry);
-    ctx.moveTo(cx + 26, ry); ctx.lineTo(cx + R * 0.9, ry);
+    ctx.moveTo(cx - R * 0.95, ry); ctx.lineTo(cx - 26, ry);
+    ctx.moveTo(cx + 26, ry); ctx.lineTo(cx + R * 0.95, ry);
     ctx.moveTo(cx, ry + 26); ctx.lineTo(cx, ry + R * 0.7);
     ctx.stroke();
     // chevron
@@ -227,6 +236,15 @@ export class HUD {
       const d = i * R * 0.14;
       ctx.beginPath(); ctx.moveTo(cx - 8 + i, ry + d); ctx.lineTo(cx + 8 - i, ry + d); ctx.stroke();
     }
+    // aim marker: where the turret is slewing to (mouse-look / fast traverse)
+    const dYaw = wrapAngle(t.aimYaw - t.turretYaw);
+    if (Math.abs(dYaw) > 0.03 || Math.abs(t.aimPitch - t.pitch) > 0.02) {
+      const sxp = t.muzzle[0] + Math.sin(t.aimYaw) * 80, syp = t.muzzle[1] + Math.tan(t.aimPitch) * 80, szp = t.muzzle[2] + Math.cos(t.aimYaw) * 80;
+      const q = this.project(v, sxp, syp, szp);
+      ctx.strokeStyle = 'rgba(255,230,120,0.9)'; ctx.lineWidth = 2;
+      if (q && Math.abs(q.nx) < 1 && Math.abs(q.ny) < 1) { ctx.beginPath(); ctx.arc(q.x, q.y, 7, 0, Math.PI * 2); ctx.stroke(); }
+      else { const a = -Math.sign(dYaw); ctx.beginPath(); ctx.moveTo(cx + a * (R - 14), ry - 10); ctx.lineTo(cx + a * (R - 2), ry); ctx.lineTo(cx + a * (R - 14), ry + 10); ctx.stroke(); }
+    }
     // reload arc
     const rel = clamp(1 - t.cooldown / (W.reload * (t.power.rapid > 0 ? 0.5 : 1)), 0, 1);
     ctx.strokeStyle = rel >= 1 ? 'rgba(120,255,140,0.9)' : 'rgba(255,200,80,0.9)'; ctx.lineWidth = 4;
@@ -240,9 +258,11 @@ export class HUD {
     let range = null;
     if (W.kind === 'lob' && v.impact) range = Math.hypot(v.impact[0] - t.x, v.impact[2] - t.z);
     else {
-      for (let s = 2; s < 400; s += 2) {
+      for (let s = 2; s < 400 && range === null; s += 1.5) {
         const x = t.muzzle[0] + t.dir[0] * s, y = t.muzzle[1] + t.dir[1] * s, z = t.muzzle[2] + t.dir[2] * s;
         if (y < g.world.heightAt(x, z)) { range = s; break; }
+        g.world.query(x, z, 0.3, (o) => { if (y < o.top) { range = s; return false; } });
+        for (const e of g.tanks) if (e !== t && e.alive && Math.hypot(e.x - x, e.z - z) < e.radius && y < e.y + 2.6) range = s;
       }
     }
     this.label(cx + 50, ry + 22, range ? `RNG ${Math.round(range)}m` : 'RNG ---', 13, '#bfffd0', 'left');
@@ -250,7 +270,7 @@ export class HUD {
     if (t.zoom) this.label(cx + 50, ry - 22, `ZOOM ${t.def.zoom}x`, 13, '#ffe08a', 'left');
     // compass tape
     const heading = ((-t.turretYaw * 180) / Math.PI + 180 + 3600) % 360;
-    const tapeW = Math.min(v.w * 0.5, 360), tx = cx - tapeW / 2, ty = v.y + 22;
+    const tapeW = Math.min(v.w * 0.5, 360), tx = cx - tapeW / 2, ty = v.y + (v.y < 60 ? 76 : 22);
     this.roundRect(tx, ty - 12, tapeW, 26, 6, 'rgba(0,0,0,0.5)');
     ctx.save(); ctx.beginPath(); ctx.rect(tx, ty - 14, tapeW, 30); ctx.clip();
     for (let d = -60; d <= 60; d += 5) {
@@ -291,6 +311,14 @@ export class HUD {
   // ---------- player panel ----------
   drawPanel(t, x, y, corner, v) {
     const ctx = this.ctx;
+    if (v && v.h < 420 && !t.human) {
+      // compact badge for spectator quadrants so tanks stay visible
+      const w = 170, px = x, py = y - 34;
+      this.roundRect(px, py, w, 30, 10, 'rgba(15,20,35,0.6)', t.css);
+      this.label(px + 10, py + 10, t.name.replace(' (bot)', '') + ' · ' + t.def.name, 11, t.css, 'left');
+      if (t.alive) this.bar(px + 10, py + 19, w - 20, 6, t.hp / t.maxHp, hpCol(t.hp / t.maxHp));
+      return;
+    }
     const w = 230, h = 92 + Math.max(0, t.weapons.length - 2) * 0;
     const px = corner[1] === 'l' ? x : x - w;
     const py = corner[0] === 'b' ? y - h : y;
@@ -476,7 +504,21 @@ export class HUD {
   drawGameOver(W, H) {
     const g = this.g, ctx = this.ctx;
     const k = Math.min(1, g.overT * 1.5);
-    ctx.fillStyle = `rgba(10,15,30,${0.55 * k})`; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = `rgba(10,15,30,${0.35 * k})`; ctx.fillRect(0, 0, W, H);
+    // confetti!
+    if (!this.confetti || this.confettiFor !== g.winner) {
+      this.confettiFor = g.winner;
+      const cols = ['#ff5247', '#4d8cff', '#ffd133', '#59e666', '#ff7ad9', '#ffffff'];
+      this.confetti = Array.from({ length: 160 }, () => ({ x: Math.random() * W, y: -Math.random() * H, vy: 60 + Math.random() * 90, sw: Math.random() * 6, r: Math.random() * 6, c: cols[Math.floor(Math.random() * cols.length)], s: 5 + Math.random() * 6 }));
+    }
+    const dt = 1 / 60;
+    for (const c of this.confetti) {
+      c.y += c.vy * dt; c.sw += dt * 3; c.r += dt * 4;
+      if (c.y > H + 10) { c.y = -10; c.x = Math.random() * W; }
+      ctx.save(); ctx.translate(c.x + Math.sin(c.sw) * 14, c.y); ctx.rotate(c.r);
+      ctx.fillStyle = c.c; ctx.fillRect(-c.s / 2, -c.s / 4, c.s, c.s / 2);
+      ctx.restore();
+    }
     const w = g.winner;
     ctx.save();
     ctx.translate(W / 2, H * 0.2);
@@ -486,8 +528,9 @@ export class HUD {
     ctx.restore();
     this.label(W / 2, H * 0.2 + 56, g.winReason || '', 16, '#fff', 'center');
     const rows = [...g.tanks].sort((a, b) => b.score - a.score || a.deaths - b.deaths);
-    const tx = W / 2 - 300, ty = H * 0.36;
-    this.roundRect(tx - 10, ty - 30, 620, 50 + rows.length * 38, 14, 'rgba(15,20,35,0.75)');
+    // standings sit low so the winning tank stays visible centre-screen
+    const tx = W / 2 - 300, ty = H - 80 - rows.length * 38;
+    this.roundRect(tx - 10, ty - 30, 620, 40 + rows.length * 38, 14, 'rgba(15,20,35,0.75)');
     const cols = ['PLAYER', 'TANK', 'KILLS', 'DEATHS', 'DMG', 'ACC', 'PICKUPS'];
     const cx = [0, 170, 290, 360, 440, 510, 560];
     cols.forEach((c, i) => this.label(tx + cx[i], ty - 10, c, 11, '#9ab', 'left'));
@@ -497,7 +540,7 @@ export class HUD {
       const vals = [`${i === 0 ? '🏆 ' : ''}${t.name}`, t.def.name, t.kills, t.deaths, Math.round(t.stats.dmg), acc + '%', t.stats.pickups];
       vals.forEach((v, j) => this.label(tx + cx[j], y, String(v), j === 0 ? 16 : 14, j === 0 ? t.css : '#fff', 'left'));
     });
-    if (g.overT > 2.5) this.label(W / 2, ty + 70 + rows.length * 38, 'Press ENTER / SPACE / G to play again', 18, '#ffdd33', 'center');
+    if (g.overT > 2.5) this.label(W / 2, H * 0.2 + 84, 'Press ENTER / SPACE / G to play again', 18, '#ffdd33', 'center');
   }
 
   // ---------- lobby ----------
