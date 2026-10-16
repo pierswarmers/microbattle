@@ -146,13 +146,88 @@ export class Geo {
     return this;
   }
 
+  /**
+   * Rounded box ("toy block") centred at (x,y,z) with full sizes (w,h,d) and corner radius r.
+   * Built from a subdivided cube pushed onto the rounded shape; call smooth() for soft shading.
+   */
+  rbox(x, y, z, w, h, d, r, col, seg = 3, topCol = null) {
+    const hx = w / 2, hy = h / 2, hz = d / 2;
+    r = Math.min(r, hx, hy, hz);
+    const ix = hx - r, iy = hy - r, iz = hz - r;
+    const P = (u, v, f) => {
+      // f = face index: point on the unit cube face, then rounded
+      const a = -1 + (2 * u) / seg, b = -1 + (2 * v) / seg;
+      const c = [[1, b, -a], [-1, b, a], [a, 1, -b], [a, -1, b], [a, b, 1], [-a, b, -1]][f];
+      const px = c[0] * hx, py = c[1] * hy, pz = c[2] * hz;
+      const qx = Math.max(-ix, Math.min(ix, px)), qy = Math.max(-iy, Math.min(iy, py)), qz = Math.max(-iz, Math.min(iz, pz));
+      let dx = px - qx, dy = py - qy, dz = pz - qz;
+      const l = Math.hypot(dx, dy, dz) || 1;
+      return [x + qx + (dx / l) * r, y + qy + (dy / l) * r, z + qz + (dz / l) * r];
+    };
+    for (let f = 0; f < 6; f++) {
+      const c = f === 2 && topCol ? topCol : col;
+      for (let v = 0; v < seg; v++) for (let u = 0; u < seg; u++) this.quad(P(u, v, f), P(u + 1, v, f), P(u + 1, v + 1, f), P(u, v + 1, f), c);
+    }
+    return this;
+  }
+
+  /** Soft contact-shadow disc: red channel carries the falloff (1 over the inner 70%, fading to 0 at the rim). */
+  blob(seg = 18) {
+    const c1 = [1, 1, 1, 1], c0 = [0, 0, 0, 1];
+    for (let i = 0; i < seg; i++) {
+      const a0 = (i / seg) * Math.PI * 2, a1 = ((i + 1) / seg) * Math.PI * 2;
+      const p = (a, r) => [Math.cos(a) * r, 0, Math.sin(a) * r];
+      this.triC([0, 0, 0], p(a1, 0.7), p(a0, 0.7), c1, c1, c1);
+      this.triC(p(a0, 0.7), p(a1, 0.7), p(a1, 1), c1, c1, c0);
+      this.triC(p(a0, 0.7), p(a1, 1), p(a0, 1), c1, c0, c0);
+    }
+    return this;
+  }
+
+  /** Smooth shading: average normals of faces meeting at a vertex when they are within `deg` of each other. */
+  smooth(deg = 60) {
+    const cosT = Math.cos((deg * Math.PI) / 180);
+    const pos = this.pos, nor = this.nor;
+    const groups = new Map();
+    const key = (i) => `${Math.round(pos[i] * 1e3)},${Math.round(pos[i + 1] * 1e3)},${Math.round(pos[i + 2] * 1e3)}`;
+    for (let i = 0; i < pos.length; i += 3) {
+      const k = key(i);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(i);
+    }
+    const out = nor.slice();
+    for (const idx of groups.values()) {
+      if (idx.length < 2) continue;
+      for (const i of idx) {
+        let sx = 0, sy = 0, sz = 0;
+        for (const j of idx) {
+          if (nor[i] * nor[j] + nor[i + 1] * nor[j + 1] + nor[i + 2] * nor[j + 2] >= cosT) { sx += nor[j]; sy += nor[j + 1]; sz += nor[j + 2]; }
+        }
+        const l = Math.hypot(sx, sy, sz) || 1;
+        out[i] = sx / l; out[i + 1] = sy / l; out[i + 2] = sz / l;
+      }
+    }
+    this.nor = out;
+    return this;
+  }
+
   /** Append another Geo, transformed by matrix m. */
   merge(g, m = null) {
     const prev = this.t;
     this.t = m;
     for (let i = 0; i < g.pos.length; i += 9) {
       const c = g.col.slice((i / 3) * 4, (i / 3) * 4 + 4);
+      const n0 = this.nor.length;
       this.tri(g.pos.slice(i, i + 3), g.pos.slice(i + 3, i + 6), g.pos.slice(i + 6, i + 9), c);
+      // carry over (possibly smoothed) normals, rotated by m
+      for (let k = 0; k < 3; k++) {
+        let nx = g.nor[i + k * 3], ny = g.nor[i + k * 3 + 1], nz = g.nor[i + k * 3 + 2];
+        if (m) {
+          const tx = m[0] * nx + m[4] * ny + m[8] * nz, ty = m[1] * nx + m[5] * ny + m[9] * nz, tz = m[2] * nx + m[6] * ny + m[10] * nz;
+          const l = Math.hypot(tx, ty, tz) || 1; nx = tx / l; ny = ty / l; nz = tz / l;
+        }
+        this.nor[n0 + k * 3] = nx; this.nor[n0 + k * 3 + 1] = ny; this.nor[n0 + k * 3 + 2] = nz;
+      }
     }
     this.t = prev;
     return this;

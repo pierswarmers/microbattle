@@ -22,12 +22,12 @@ export const OPTIONS = {
   lobby: [true, 'bool', 'Show the join lobby before the match'],
   lobbyTimeout: [0, 'int', 'Auto-start the lobby after N seconds (0 = wait)'],
   split: [false, 'bool', "Birds-eye: give each human their own split-screen view"],
-  zoom: [52, 'int', 'Birds-eye camera height (smaller = closer)'],
+  zoom: [38, 'int', 'Birds-eye camera height (smaller = closer)'],
   maxZoom: [150, 'int', 'Max birds-eye height when players spread out'],
   stabilizer: [true, 'bool', 'Turret keeps its world aim while the hull turns'],
   mouse: [true, 'bool', 'Player 1 can aim with the mouse'],
   quality: ['medium', 'enum', 'Graphics quality', ['low', 'medium', 'high']],
-  shadows: [true, 'bool', 'Real-time shadows'],
+  season: ['summer', 'enum', 'Season: retints the island (spring blossom, summer apples, autumn leaves, winter snow)', ['spring', 'summer', 'autumn', 'winter', 'random']],
   volume: [0.7, 'float', 'Master volume 0-1'],
   music: [true, 'bool', 'Background music'],
   mute: [false, 'bool', 'Start muted'],
@@ -67,6 +67,7 @@ export function resolveConfig(...sources) {
   out.mapSize = clampI(out.mapSize, 200, 700);
   out.trees = Math.max(0, Math.min(2, out.trees));
   out.volume = Math.max(0, Math.min(1, out.volume));
+  if (out.season === 'random') out.season = ['spring', 'summer', 'autumn', 'winter'][Math.floor(Math.random() * 4)];
   if (!out.seed) out.seed = Math.floor(Math.random() * 1e6) + 1;
   const list = (s) => String(s || '').split(',').map((x) => x.trim().toLowerCase()).filter((x) => TANK_ORDER.includes(x));
   out.tanks = list(out.tanks);

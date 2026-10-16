@@ -13,13 +13,16 @@ import { m4, clamp, lerp, wrapAngle, approachAngle, makeRng, alignToNormal, dirF
 const DT = 1 / 60;
 const BOT_NAMES = ['Sarge', 'Tinker', 'Rusty', 'Boomer', 'Dozer', 'Pip', 'Gizmo', 'Nugget', 'Sprocket', 'Chomp'];
 
+const BIRDS_FOV = 43;
+const BIRDS_BACK = 1 / Math.tan((47 * Math.PI) / 180); // eye sits this far south per unit of height
+
 export class Game {
   constructor(canvas, hudCanvas, cfg) {
     this.cfg = cfg;
     this.canvas = canvas;
-    this.renderer = new Renderer(canvas, { shadows: cfg.shadows, shadowSize: cfg.quality === 'low' ? 1024 : 2048, preserve: cfg.debug });
+    this.renderer = new Renderer(canvas, { preserve: cfg.debug });
     this.rng = makeRng(cfg.seed);
-    this.M = createModels(this.renderer, makeRng(cfg.seed + 1));
+    this.M = createModels(this.renderer, makeRng(cfg.seed + 1), cfg.season);
     this.world = new World(this.renderer, this.M, cfg);
     this.fx = new FX(this.M, this.world);
     this.sound = new Sound(cfg);
@@ -1126,8 +1129,8 @@ export class Game {
     const vm = this._fitM || (this._fitM = [m4.create(), m4.create(), m4.create()]);
     const fits = (h) => {
       const z0 = this.birdsAnchor(fz, h);
-      m4.lookAt(vm[0], fx, cy + h, z0 + h * 0.5, fx, cy, z0 - h * 0.04);
-      m4.perspective(vm[1], (42 * Math.PI) / 180, aspect, 0.5, 900);
+      m4.lookAt(vm[0], fx, cy + h, z0 + h * BIRDS_BACK, fx, cy, z0);
+      m4.perspective(vm[1], (BIRDS_FOV * Math.PI) / 180, aspect, 0.5, 1200);
       m4.multiply(vm[2], vm[1], vm[0]);
       for (const t of list) for (const [ox, oz] of [[-6, -6], [6, 6], [-6, 6], [6, -6]]) {
         const p = m4.transform(vm[2], t.x + ox, t.y + 2, t.z + oz, 1);
@@ -1146,19 +1149,19 @@ export class Game {
   }
 
   /** The look-at point sits slightly ahead (north) so the tilted view is centred on the tanks. */
-  birdsAnchor(fz, h) { return fz + h * 0.06; }
+  birdsAnchor(fz, h) { return fz + h * 0.03; }
 
   updateCamera(v, dt) {
     const prev = this.camState || (this.camState = {});
     const st = prev[v.key] || (prev[v.key] = { fx: 0, fy: 0, fz: 0, h: 60, init: false, yaw: 0 });
     const shk = this.shake * this.shake * 1.6;
     const sx = (Math.random() - 0.5) * shk, sy = (Math.random() - 0.5) * shk, sz = (Math.random() - 0.5) * shk;
-    let eye, at, fov = 45, near = 0.5, far = 900, fog = 0.0016, sky = true;
+    let eye, at, fov = 45, near = 0.5, far = 1200, sky = true;
     if (v.kind === 'lobby') {
       const a = this.time * 0.05;
       eye = [Math.sin(a) * 110, 70, Math.cos(a) * 110];
       at = [0, 0, 0];
-      fov = 50; fog = 0.002;
+      fov = 50;
       v.focus = [0, 0, 0];
       v.camH = 70;
     } else if (v.kind === 'winner') {
@@ -1167,7 +1170,7 @@ export class Game {
       const R = 20;
       eye = [t.x + Math.sin(st.yaw) * R, t.y + 9, t.z + Math.cos(st.yaw) * R];
       at = [t.x, t.y - 1.5, t.z];
-      fov = 50; fog = 0.002;
+      fov = 50;
       v.focus = [t.x, t.y, t.z];
       v.camH = 20;
     } else if (v.kind === 'birds' || v.kind === 'overview') {
@@ -1187,10 +1190,10 @@ export class Game {
       st.h = lerp(st.h, fit.h, st.init ? Math.min(1, dt * (fit.h > st.h ? 3 : 0.9)) : 1);
       st.init = true;
       const z0 = this.birdsAnchor(st.fz, st.h);
-      eye = [st.fx + sx * 3, st.fy + st.h + sy * 3, z0 + st.h * 0.5 + sz * 3];
-      at = [st.fx + sx * 2, st.fy, z0 - st.h * 0.04];
-      fov = 42;
-      fog = 0.0009;
+      // tabletop view: a narrow lens looking down at about 47 degrees
+      eye = [st.fx + sx * 3, st.fy + st.h + sy * 3, z0 + st.h * BIRDS_BACK + sz * 3];
+      at = [st.fx + sx * 2, st.fy, z0];
+      fov = BIRDS_FOV;
       v.focus = [st.fx, st.fy, st.fz];
       v.camH = st.h;
       sky = true;
@@ -1220,7 +1223,6 @@ export class Game {
         fov = t.zoom ? 58 / t.def.zoom : 58;
         near = 0.3;
       }
-      fog = 0.0028;
       v.focus = [eye[0] + (at[0] - eye[0]) * 6, t.y, eye[2] + (at[2] - eye[2]) * 6];
     }
     m4.lookAt(this.view, eye[0], eye[1], eye[2], at[0], at[1], at[2]);
@@ -1230,20 +1232,13 @@ export class Game {
     v.vp = m4.multiply(m4.create(), v.proj, v.view);
     v.invVP = m4.invert(m4.create(), v.vp);
     v.cam = eye;
-    v.fogDensity = fog;
+    // fog starts past the subject so the diorama stays crisp and only the far island hazes over
+    const camDist = Math.hypot(eye[0] - v.focus[0], eye[1] - v.focus[1], eye[2] - v.focus[2]);
+    v.fogNear = Math.max(60, camDist * 1.15);
+    v.fogFar = v.fogNear + 100;
     v.sky = sky;
     v.listen = [eye[0], eye[2] - (v.kind === 'birds' ? (v.camH || 0) * 0.5 : 0)];
-    if (v.kind === 'birds' || v.kind === 'overview' || v.kind === 'lobby' || v.kind === 'winner') {
-      v.shadowCenter = [v.focus[0], v.focus[1], v.focus[2] - (v.camH || 60) * 0.1];
-      v.shadowRadius = Math.min(240, (v.camH || 60) * 1.3); // cover the corners of the tilted view
-      v.listen = [v.focus[0], v.focus[2]];
-    } else {
-      const d = v.tank.alive ? (v.tank.zoom ? 70 : 45) : 20;
-      v.shadowCenter = [v.focus[0], v.focus[1], v.focus[2]];
-      const fdx = at[0] - eye[0], fdz = at[2] - eye[2], fl = Math.hypot(fdx, fdz) || 1;
-      v.shadowCenter = [eye[0] + (fdx / fl) * d, v.tank.y, eye[2] + (fdz / fl) * d];
-      v.shadowRadius = d + 15;
-    }
+    if (v.kind === 'birds' || v.kind === 'overview' || v.kind === 'lobby' || v.kind === 'winner') v.listen = [v.focus[0], v.focus[2]];
   }
 
   predictImpact(t, W) {
@@ -1292,6 +1287,7 @@ export class Game {
       if (t.invulnT > 0 && Math.floor(this.time * 12) % 2 === 0) { r *= 1.8; g *= 1.8; b *= 1.8; }
       if (t.alive && t.power.ghost > 0 && Math.floor(this.time * 30) % 3 !== 0) continue;
       parts.hull.add(t.hullM, r, g, b);
+      this.world.blob(M.blob, t.x, t.z, t.radius * 1.55, 2.5, 0.26);
       if (t.alive) {
         parts.turret.add(t.turretM, r, g, b);
         parts.barrel.add(t.barrelM, r, g, b);
@@ -1313,6 +1309,7 @@ export class Game {
     for (const d of this.debris) {
       m4.compose(m, d.x, d.y, d.z, d.yaw, d.pitch, 0, d.scale);
       M.tanks[d.type].turret.add(m, 0.22, 0.2, 0.2);
+      this.world.blob(M.blob, d.x, d.z, 1.4 * d.scale, Math.max(0.5, d.y - this.world.heightAt(d.x, d.z)), 0.18);
     }
   }
 
@@ -1363,6 +1360,7 @@ export class Game {
         M.gem.add(m4.compose(m, p.x, y + 0.3, p.z, p.spin * 2, 0, 0, 1.5), col[0] * 1.3, col[1] * 1.3, col[2] * 1.3);
         M.glow.add(m4.compose(m, p.x, y + 0.3, p.z, 0, 0, 0, 1.5 + Math.sin(p.spin * 6) * 0.2), col[0], col[1], col[2], 0.35);
       }
+      this.world.blob(M.blob, p.x, p.z, 1.3 - bob * 0.3, 2, 0.2);
       const n = this.world.normalAt(p.x, p.z, [0, 1, 0]);
       alignToNormal(m, p.x, p.y + 0.1, p.z, n, p.spin, 2.2, 1, 2.2);
       M.teamRing.add(m, col[0], col[1], col[2], 0.6 + Math.sin(p.spin * 4) * 0.2);
@@ -1381,6 +1379,7 @@ export class Game {
         const dx = ex - sx, dy = ey - sy, dz = ez - sz, L = Math.hypot(dx, dy, dz);
         M.dash.add(m4.compose(m, sx, sy, sz, Math.atan2(dx, dz), -Math.asin(dy / L), 0, 0.05, 0.05, L), 0.9, 0.9, 0.85, 1);
       }
+      this.world.blob(M.blob, d.x, d.z, 1.4, 1, clamp(0.3 - (d.y - d.gy) * 0.005, 0.08, 0.26));
       // landing marker
       alignToNormal(m, d.x, d.gy + 0.15, d.z, [0, 1, 0], this.time, 3, 1, 3);
       M.teamRing.add(m, 1, 0.85, 0.3, 0.5 + Math.sin(this.time * 6) * 0.3);

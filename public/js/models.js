@@ -2,14 +2,24 @@
 import { Geo, T } from './geo.js';
 import { Mesh } from './gl.js';
 
-const PAINT = [0.95, 0.95, 0.95, 1];
-const PAINT2 = [0.72, 0.72, 0.72, 1];
-const PAINT3 = [0.55, 0.55, 0.55, 1];
-const TRACK = [0.16, 0.16, 0.19, 0];
-const WHEEL = [0.36, 0.36, 0.4, 0];
-const HUB = [0.85, 0.75, 0.3, 0];
-const METAL = [0.28, 0.29, 0.32, 0];
+const PAINT = [1, 1, 1, 1];
+const PAINT2 = [0.82, 0.82, 0.82, 1];
+const PAINT3 = [0.66, 0.66, 0.66, 1];
+const TRACK = [0.24, 0.21, 0.28, 0];
+const WHEEL = [0.34, 0.31, 0.38, 0];
+const HUB = [1, 0.8, 0.22, 0];
+const CREAM = [1, 0.96, 0.86, 0];
+const DARK = [0.2, 0.18, 0.24, 0];
 const LIGHT = [1, 0.95, 0.6, 0];
+const GLOW = [0.35, 1, 1, 0];
+const TRUNK = hexc('#855733');
+const FOLIAGE_TOP = hexc('#80D966', 1), FOLIAGE_BOT = hexc('#47A845', 1);
+const PINE = hexc('#338C59', 1);
+const ROCK = hexc('#9E9EA8', 1);
+const SNOW = [0.97, 0.98, 1, 0];
+
+function hexc(h, mask = 0) { return [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255, mask]; }
+const mixc = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3]];
 
 /** Turret / barrel mount points per tank type (in tank-local units before type scale). */
 export const TANK_GEOM = {
@@ -20,139 +30,156 @@ export const TANK_GEOM = {
   longshot: { turretY: 1.25, barrelY: 0.25, barrelZ: 0.6, barrelLen: 4.4, sightY: 0.8 },
 };
 
+/** Chunky toy treads: a rounded rubber band per side with big wheels and bright hubs. */
 function tracks(g, w, len, h, y = 0) {
   for (const sx of [-1, 1]) {
     const x = sx * (w / 2);
-    g.box(x, y + h / 2, 0, 0.62, h, len, TRACK, 0.05);
-    g.box(x, y + h * 0.15, 0, 0.66, h * 0.3, len * 0.93, TRACK);
-    const n = Math.max(3, Math.round(len / 0.85));
+    g.rbox(x, y + h / 2, 0, 0.66, h, len, h * 0.48, TRACK, 3);
+    const n = Math.max(3, Math.round(len / 1.05));
     for (let i = 0; i < n; i++) {
-      const z = -len / 2 + 0.45 + (i * (len - 0.9)) / (n - 1);
-      g.cyl(x + (sx > 0 ? 0.31 : -0.37), y + h * 0.45, z, h * 0.36, h * 0.36, 0.06, 8, WHEEL, 'x');
-      g.cyl(x + (sx > 0 ? 0.36 : -0.41), y + h * 0.45, z, h * 0.14, h * 0.14, 0.05, 6, HUB, 'x');
+      const z = -len / 2 + h * 0.5 + (i * (len - h)) / (n - 1);
+      g.cyl(x + (sx > 0 ? 0.3 : -0.4), y + h * 0.48, z, h * 0.36, h * 0.36, 0.1, 10, WHEEL, 'x');
+      g.cyl(x + (sx > 0 ? 0.38 : -0.44), y + h * 0.48, z, h * 0.15, h * 0.15, 0.06, 8, HUB, 'x');
     }
   }
 }
 
 function antenna(g, x, y, z, h) {
-  g.cyl(x, y, z, 0.035, 0.02, h, 4, METAL);
-  g.box(x + 0.22, y + h - 0.18, z, 0.42, 0.26, 0.03, [1, 1, 1, 1]);
+  g.cyl(x, y, z, 0.05, 0.04, h, 5, DARK);
+  g.sphere(x, y + h, z, 0.13, 1, PAINT2);
 }
 
 function headlights(g, w, y, z) {
-  for (const sx of [-1, 1]) g.cyl(sx * w, y, z, 0.13, 0.13, 0.08, 8, LIGHT, 'z');
+  for (const sx of [-1, 1]) g.sphere(sx * w, y, z, 0.17, 1, LIGHT, 0, Math.random, 0.9);
+}
+
+/** Barrel with a collar at the base and a rounded muzzle tip. */
+function gun(g, x, len, r, col = PAINT2, tip = DARK) {
+  g.cyl(x, 0, 0, r, r * 0.92, len, 10, col, 'z');
+  g.cyl(x, 0, len - r * 1.6, r * 1.45, r * 1.45, r * 1.6, 10, col, 'z');
+  g.cyl(x, 0, len - 0.02, r * 0.75, r * 0.75, 0.04, 10, tip, 'z');
 }
 
 function buildTank(type) {
   const hull = new Geo(), turret = new Geo(), barrel = new Geo();
   if (type === 'hornet') {
-    tracks(hull, 2.0, 3.0, 0.75);
-    hull.hull(0, 0.95, 0, 1.9, 0.5, 3.1, 0.55, 0.3, PAINT, PAINT);
-    hull.box(0, 1.22, -1.1, 1.3, 0.12, 0.5, PAINT2);
-    headlights(hull, 0.6, 0.98, 1.56);
-    turret.cyl(0, 0, 0, 0.75, 0.62, 0.42, 10, PAINT, 'y', PAINT);
-    turret.sphere(0, 0.42, -0.1, 0.38, 1, PAINT2, 0, Math.random, 0.6);
-    turret.box(0, 0.28, 0.45, 0.6, 0.3, 0.4, PAINT2);
-    antenna(turret, -0.45, 0.4, -0.35, 1.3);
-    for (const sx of [-0.14, 0.14]) {
-      barrel.cyl(sx, 0, 0, 0.07, 0.07, 1.9, 6, METAL, 'z');
-      barrel.cyl(sx, 0, 1.6, 0.1, 0.1, 0.3, 6, METAL, 'z');
-    }
-    barrel.box(0, 0, 0.2, 0.42, 0.22, 0.4, PAINT3);
+    tracks(hull, 2.0, 3.0, 0.8);
+    hull.rbox(0, 0.98, 0.05, 1.75, 0.6, 3.05, 0.28, PAINT);
+    hull.rbox(0, 1.22, -1.05, 1.2, 0.2, 0.55, 0.1, PAINT2);
+    hull.rbox(0, 0.75, 1.5, 1.5, 0.3, 0.25, 0.12, CREAM);
+    headlights(hull, 0.55, 1.05, 1.55);
+    turret.sphere(0, 0.05, 0, 0.78, 2, PAINT, 0, Math.random, 0.62);
+    turret.sphere(0, 0.42, -0.15, 0.32, 1, CREAM, 0, Math.random, 0.7);
+    antenna(turret, -0.42, 0.3, -0.35, 1.0);
+    for (const sx of [-0.15, 0.15]) gun(barrel, sx, 1.9, 0.085);
+    barrel.rbox(0, 0, 0.18, 0.5, 0.28, 0.42, 0.1, PAINT3);
   } else if (type === 'trooper') {
-    tracks(hull, 2.4, 3.7, 0.85);
-    hull.hull(0, 1.1, 0, 2.3, 0.6, 3.8, 0.7, 0.35, PAINT, PAINT);
-    hull.box(0, 1.15, 0, 3.0, 0.1, 3.4, PAINT2);
-    headlights(hull, 0.8, 1.12, 1.92);
-    hull.box(-0.8, 1.48, -1.4, 0.5, 0.25, 0.6, PAINT3);
-    turret.box(0, 0.3, -0.05, 1.7, 0.6, 1.9, PAINT, 0.18);
-    turret.cyl(0.4, 0.6, -0.3, 0.3, 0.26, 0.25, 8, PAINT2);
-    turret.box(0, 0.32, 0.85, 0.7, 0.42, 0.3, PAINT2);
-    antenna(turret, -0.6, 0.6, -0.7, 1.6);
-    barrel.cyl(0, 0, 0, 0.15, 0.13, 2.7, 8, METAL, 'z');
-    barrel.cyl(0, 0, 2.3, 0.2, 0.2, 0.4, 8, METAL, 'z');
-    barrel.cyl(0, 0, 0, 0.28, 0.24, 0.5, 8, PAINT3, 'z');
+    tracks(hull, 2.4, 3.7, 0.9);
+    hull.rbox(0, 1.12, 0, 2.15, 0.7, 3.6, 0.32, PAINT);
+    for (const sx of [-1, 1]) hull.rbox(sx * 1.2, 1.0, 0, 0.5, 0.16, 3.5, 0.08, PAINT2);
+    headlights(hull, 0.7, 1.15, 1.8);
+    hull.rbox(-0.75, 1.5, -1.35, 0.5, 0.3, 0.55, 0.12, CREAM);
+    turret.rbox(0, 0.3, -0.05, 1.65, 0.62, 1.85, 0.3, PAINT);
+    turret.cyl(0.42, 0.58, -0.35, 0.3, 0.27, 0.16, 10, PAINT2);
+    turret.sphere(0.42, 0.74, -0.35, 0.18, 1, CREAM, 0, Math.random, 0.6);
+    antenna(turret, -0.55, 0.6, -0.65, 1.2);
+    gun(barrel, 0, 2.7, 0.16);
+    barrel.cyl(0, 0, 0, 0.3, 0.27, 0.45, 10, PAINT3, 'z');
   } else if (type === 'bulldog') {
-    tracks(hull, 2.9, 4.2, 1.0);
-    hull.hull(0, 1.3, 0, 2.7, 0.75, 4.3, 0.8, 0.4, PAINT, PAINT);
-    for (const sx of [-1, 1]) hull.box(sx * 1.47, 0.95, 0, 0.12, 0.55, 3.9, PAINT2);
-    // ram plow
-    hull.box(0, 0.6, 2.35, 3.2, 0.7, 0.25, PAINT3, 0.1);
-    for (let i = -3; i <= 3; i++) hull.box(i * 0.45, 0.6, 2.5, 0.12, 0.6, 0.15, METAL);
-    headlights(hull, 1.0, 1.3, 2.17);
-    turret.box(0, 0.38, -0.1, 2.3, 0.76, 2.5, PAINT, 0.2);
-    turret.box(0, 0.4, -1.45, 1.6, 0.5, 0.5, PAINT2);
-    turret.cyl(-0.55, 0.76, -0.4, 0.38, 0.32, 0.28, 8, PAINT2);
-    turret.cyl(0.6, 0.76, -0.3, 0.24, 0.24, 0.2, 8, PAINT3);
-    antenna(turret, 0.85, 0.76, -1.0, 1.8);
-    barrel.cyl(0, 0, 0, 0.24, 0.2, 3.1, 8, METAL, 'z');
-    barrel.box(0, 0, 3.0, 0.62, 0.32, 0.5, METAL);
-    barrel.cyl(0, 0, 0, 0.42, 0.36, 0.7, 8, PAINT3, 'z');
+    tracks(hull, 2.9, 4.2, 1.05);
+    hull.rbox(0, 1.32, 0, 2.6, 0.85, 4.1, 0.38, PAINT);
+    for (const sx of [-1, 1]) hull.rbox(sx * 1.45, 1.05, 0, 0.3, 0.5, 3.8, 0.14, PAINT2);
+    // chunky toy bulldozer plow
+    hull.rbox(0, 0.62, 2.35, 3.2, 0.72, 0.38, 0.17, CREAM);
+    headlights(hull, 0.95, 1.35, 2.08);
+    turret.rbox(0, 0.38, -0.1, 2.2, 0.8, 2.4, 0.38, PAINT);
+    turret.rbox(0, 0.42, -1.4, 1.5, 0.5, 0.5, 0.2, PAINT2);
+    turret.cyl(-0.55, 0.76, -0.4, 0.38, 0.33, 0.2, 10, PAINT2);
+    turret.sphere(-0.55, 0.96, -0.4, 0.22, 1, CREAM, 0, Math.random, 0.6);
+    antenna(turret, 0.8, 0.76, -1.0, 1.3);
+    gun(barrel, 0, 3.1, 0.24);
+    barrel.rbox(0, 0, 2.95, 0.66, 0.4, 0.5, 0.15, PAINT3);
+    barrel.cyl(0, 0, 0, 0.44, 0.38, 0.65, 10, PAINT3, 'z');
   } else if (type === 'thumper') {
-    tracks(hull, 2.6, 3.9, 0.85);
-    hull.hull(0, 1.1, 0, 2.5, 0.6, 4.0, 0.5, 0.2, PAINT, PAINT);
-    hull.box(0, 1.45, 1.3, 1.6, 0.2, 0.8, PAINT2);
-    headlights(hull, 0.9, 1.1, 2.0);
-    // stabiliser feet
-    for (const sx of [-1, 1]) hull.box(sx * 1.45, 0.5, -1.7, 0.3, 0.3, 0.5, METAL);
-    turret.cyl(0, 0, 0, 1.15, 1.05, 0.45, 10, PAINT, 'y', PAINT2);
-    for (const sx of [-1, 1]) turret.box(sx * 0.62, 0.6, 0.1, 0.22, 0.8, 1.2, PAINT2, 0.1);
-    turret.box(0, 0.5, -0.9, 1.2, 0.4, 0.35, PAINT3);
-    antenna(turret, -0.7, 0.45, -0.8, 1.4);
-    barrel.cyl(0, 0, -0.5, 0.42, 0.38, 2.5, 10, METAL, 'z');
-    barrel.cyl(0, 0, 1.6, 0.48, 0.48, 0.35, 10, PAINT3, 'z');
-    barrel.cyl(0, 0, -0.6, 0.5, 0.5, 0.5, 10, PAINT2, 'z');
+    tracks(hull, 2.6, 3.9, 0.9);
+    hull.rbox(0, 1.1, 0, 2.35, 0.68, 3.85, 0.32, PAINT);
+    hull.rbox(0, 1.48, 1.3, 1.5, 0.22, 0.8, 0.1, PAINT2);
+    headlights(hull, 0.8, 1.15, 1.9);
+    for (const sx of [-1, 1]) hull.sphere(sx * 1.35, 0.55, -1.75, 0.28, 1, HUB, 0, Math.random, 0.8);
+    turret.cyl(0, 0, 0, 1.15, 1.08, 0.5, 14, PAINT, 'y', PAINT2);
+    turret.sphere(0, 0.5, -0.1, 0.95, 2, PAINT, 0, Math.random, 0.45);
+    for (const sx of [-1, 1]) turret.rbox(sx * 0.66, 0.6, 0.1, 0.24, 0.8, 1.2, 0.1, PAINT2);
+    antenna(turret, -0.7, 0.45, -0.8, 1.1);
+    barrel.cyl(0, 0, -0.5, 0.44, 0.4, 2.5, 14, PAINT2, 'z');
+    barrel.cyl(0, 0, 1.6, 0.54, 0.54, 0.4, 14, PAINT3, 'z');
+    barrel.cyl(0, 0, 1.98, 0.3, 0.3, 0.04, 12, DARK, 'z');
+    barrel.cyl(0, 0, -0.6, 0.52, 0.52, 0.5, 14, PAINT3, 'z');
   } else if (type === 'longshot') {
-    tracks(hull, 2.2, 3.8, 0.75);
-    hull.hull(0, 0.95, 0, 2.1, 0.45, 4.0, 1.0, 0.4, PAINT, PAINT);
-    hull.box(0, 1.08, -1.4, 1.6, 0.25, 0.7, PAINT2, 0.2);
-    headlights(hull, 0.7, 0.95, 1.85);
-    turret.box(0, 0.22, -0.2, 1.3, 0.45, 1.7, PAINT, 0.25);
-    turret.box(0.5, 0.5, -0.3, 0.3, 0.22, 0.9, METAL);
-    turret.cyl(0.5, 0.5, 0.15, 0.13, 0.13, 0.12, 6, [0.3, 1, 1, 0], 'z');
-    antenna(turret, -0.45, 0.45, -0.8, 1.5);
-    barrel.cyl(0, 0, 0, 0.11, 0.09, 4.4, 8, METAL, 'z');
-    for (let i = 0; i < 4; i++) barrel.cyl(0, 0, 0.9 + i * 0.75, 0.17, 0.17, 0.18, 8, [0.3, 1, 1, 0], 'z');
-    barrel.cyl(0, 0, 4.2, 0.16, 0.16, 0.25, 8, METAL, 'z');
-    barrel.cyl(0, 0, 0, 0.24, 0.22, 0.5, 8, PAINT3, 'z');
+    tracks(hull, 2.2, 3.8, 0.8);
+    hull.rbox(0, 0.98, 0, 1.95, 0.55, 3.85, 0.26, PAINT);
+    hull.rbox(0, 1.15, -1.35, 1.5, 0.28, 0.7, 0.12, PAINT2);
+    headlights(hull, 0.62, 1.0, 1.9);
+    turret.rbox(0, 0.22, -0.2, 1.3, 0.48, 1.7, 0.22, PAINT);
+    turret.rbox(0.5, 0.52, -0.3, 0.32, 0.26, 0.9, 0.12, PAINT2);
+    turret.sphere(0.5, 0.52, 0.17, 0.13, 1, GLOW);
+    antenna(turret, -0.45, 0.45, -0.8, 1.15);
+    gun(barrel, 0, 4.4, 0.12);
+    for (let i = 0; i < 4; i++) barrel.cyl(0, 0, 0.9 + i * 0.75, 0.19, 0.19, 0.16, 10, GLOW, 'z');
+    barrel.cyl(0, 0, 0, 0.26, 0.23, 0.45, 10, PAINT3, 'z');
   }
+  for (const g of [hull, turret, barrel]) g.smooth(55);
   return { hull, turret, barrel };
 }
 
-function tree(kind, rng) {
+/** Deciduous trees bake the green gradient in; the instance colour then only nudges (or re-seasons) it. */
+function tree(kind, rng, season) {
   const g = new Geo();
-  const trunkCol = [0.48, 0.32, 0.2, 0];
-  if (kind === 'round') {
-    g.cyl(0, 0, 0, 0.42, 0.3, 3.2, 7, trunkCol);
-    const fc = (y) => [0.95 + y * 0.08, 0.95 + y * 0.08, 0.95 + y * 0.08, 1];
-    g.sphere(0, 4.3, 0, 2.3, 1, fc, 0.12, rng);
-    g.sphere(1.2, 3.6, 0.4, 1.5, 1, fc, 0.12, rng);
-    g.sphere(-1.0, 3.8, -0.6, 1.6, 1, fc, 0.12, rng);
+  const top = [];
+  if (kind === 'round' || kind === 'fruit') {
+    g.cyl(0, 0, 0, 0.42, 0.3, 3.1, 7, TRUNK);
+    const fc = (y) => mixc(FOLIAGE_BOT, FOLIAGE_TOP, Math.min(1, Math.max(0, y * 0.55 + 0.55)));
+    for (const [x, y, z, r] of [[0, 4.3, 0, 2.2], [1.25, 3.55, 0.45, 1.55], [-1.05, 3.75, -0.6, 1.6]]) {
+      g.sphere(x, y, z, r, 1, fc, 0.13, rng);
+      top.push([x, y, z, r]);
+    }
   } else if (kind === 'pine') {
-    g.cyl(0, 0, 0, 0.35, 0.25, 2.0, 6, trunkCol);
-    const c = [1, 1, 1, 1];
-    g.cyl(0, 1.4, 0, 2.3, 0, 2.6, 8, c);
-    g.cyl(0, 2.7, 0, 1.8, 0, 2.3, 8, c);
-    g.cyl(0, 3.9, 0, 1.25, 0, 2.0, 8, c);
-  } else if (kind === 'birch') {
-    g.cyl(0, 0, 0, 0.28, 0.2, 4.2, 6, [0.92, 0.9, 0.85, 0]);
-    for (let i = 0; i < 4; i++) g.box(0, 0.8 + i * 0.9, 0, 0.5, 0.08, 0.5, [0.2, 0.2, 0.2, 0]);
-    const fc = (y) => [0.95 + y * 0.08, 0.95 + y * 0.08, 0.95 + y * 0.08, 1];
-    g.sphere(0, 5.0, 0, 1.6, 1, fc, 0.15, rng, 1.4);
+    g.cyl(0, 0, 0, 0.35, 0.25, 1.8, 6, TRUNK);
+    const shades = [0.82, 0.92, 1.04];
+    [[1.2, 2.4, 2.6], [2.5, 1.85, 2.3], [3.7, 1.3, 2.0]].forEach(([y, r, h], i) => {
+      g.cyl(0, y, 0, r, 0, h, 7, mixc([0, 0, 0, 1], PINE, shades[i]).map((v, k) => (k < 3 ? Math.min(1, v) : 1)));
+      if (season === 'winter') g.cyl(0, y + h * 0.62, 0, r * 0.42, 0, h * 0.4, 7, SNOW);
+    });
+  }
+  if (top.length) {
+    for (const [x, y, z, r] of top) {
+      if (season === 'winter') g.sphere(x, y + r * 0.55, z, r * 0.78, 1, SNOW, 0.08, rng, 0.45);
+    }
+    if (kind === 'fruit' && season !== 'winter') {
+      // spring blossom or summer apples dotted over the canopy (autumn keeps a few late apples)
+      const n = season === 'spring' ? 30 : season === 'autumn' ? 5 : 9;
+      const col = season === 'spring' ? [1, 0.72, 0.84, 0] : [0.92, 0.16, 0.14, 0];
+      const rad = season === 'spring' ? 0.26 : 0.24;
+      for (let i = 0; i < n; i++) {
+        const [x, y, z, r] = top[i % top.length];
+        const a = rng() * 6.28, e = (rng() - 0.2) * 1.2;
+        g.sphere(x + Math.cos(a) * Math.cos(e) * r * 0.98, y + Math.sin(e) * r * 0.98, z + Math.sin(a) * Math.cos(e) * r * 0.98, rad, 1, col);
+      }
+    }
   }
   return g;
 }
 
-function bush(rng) {
+function bush(rng, berries, season) {
   const g = new Geo();
-  const c = (y) => [0.9 + y * 0.1, 0.9 + y * 0.1, 0.9 + y * 0.1, 1];
-  g.sphere(0, 0.5, 0, 0.9, 1, c, 0.15, rng);
-  g.sphere(0.7, 0.4, 0.2, 0.65, 1, c, 0.15, rng);
-  g.sphere(-0.6, 0.38, -0.3, 0.7, 1, c, 0.15, rng);
-  // little berries
-  for (let i = 0; i < 5; i++) {
-    const a = rng() * 6.28;
-    g.sphere(Math.cos(a) * 0.85, 0.5 + rng() * 0.5, Math.sin(a) * 0.85, 0.1, 0, [1, 0.25, 0.3, 0]);
+  const c = (y) => [0.82 + y * 0.18, 0.82 + y * 0.18, 0.82 + y * 0.18, 1];
+  g.sphere(-0.35, 0.45, 0, 0.85, 1, c, 0.14, rng, 0.72);
+  g.sphere(0.5, 0.36, 0.15, 0.68, 1, c, 0.14, rng, 0.72);
+  if (season === 'winter') { g.sphere(-0.35, 0.82, 0, 0.6, 1, SNOW, 0.08, rng, 0.35); g.sphere(0.5, 0.65, 0.15, 0.46, 1, SNOW, 0.08, rng, 0.35); }
+  if (berries) {
+    for (let i = 0; i < 7; i++) {
+      const a = rng() * 6.28, cx = i % 2 ? -0.35 : 0.5, r = i % 2 ? 0.8 : 0.64;
+      g.sphere(cx + Math.cos(a) * r, 0.35 + rng() * 0.3, Math.sin(a) * r, 0.12, 1, [0.95, 0.15, 0.22, 0]);
+    }
   }
   return g;
 }
@@ -172,6 +199,16 @@ function mushroom(rng) {
   return g;
 }
 
+/** Little red-cap, white-spot toadstool for scattering. */
+function toadstool(rng) {
+  const g = new Geo();
+  g.cyl(0, 0, 0, 0.11, 0.09, 0.42, 7, [0.98, 0.95, 0.86, 0]);
+  g.sphere(0, 0.42, 0, 0.3, 1, (y) => (y < -0.1 ? [0.98, 0.92, 0.8, 0] : [0.92, 0.14, 0.12, 0]), 0, rng, 0.6);
+  for (let i = 0; i < 4; i++) { const a = (i / 4) * 6.28 + 0.4; g.sphere(Math.cos(a) * 0.17, 0.53, Math.sin(a) * 0.17, 0.05, 0, [1, 1, 1, 0], 0, rng, 0.5); }
+  g.sphere(0, 0.6, 0, 0.055, 0, [1, 1, 1, 0], 0, rng, 0.5);
+  return g;
+}
+
 function flower(rng) {
   const g = new Geo();
   g.cyl(0, 0, 0, 0.04, 0.03, 0.7, 4, [0.3, 0.65, 0.25, 0]);
@@ -179,29 +216,59 @@ function flower(rng) {
     const a = (i / 5) * 6.28;
     g.sphere(Math.cos(a) * 0.17, 0.72, Math.sin(a) * 0.17, 0.13, 0, [1, 1, 1, 1], 0, rng, 0.4);
   }
-  g.sphere(0, 0.74, 0, 0.1, 0, [1, 0.85, 0.2, 0], 0, rng, 0.6);
+  g.sphere(0, 0.75, 0, 0.1, 0, [1, 0.79, 0.2, 0], 0, rng, 0.6);
   return g;
 }
 
+/** Grass tuft: four slim pyramid blades leaning out from the middle. */
 function grass(rng) {
   const g = new Geo();
-  const n = 5;
-  for (let i = 0; i < n; i++) {
-    const a = rng() * 6.28, r = rng() * 0.25;
-    const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    const h = 0.5 + rng() * 0.5;
-    const yaw = rng() * 6.28;
-    const dx = Math.cos(yaw) * 0.07, dz = Math.sin(yaw) * 0.07;
-    const lean = (rng() - 0.5) * 0.3;
-    const shade = 0.85 + rng() * 0.25;
-    g.tri([x - dx, 0, z - dz], [x + dx, 0, z + dz], [x + lean, h, z + lean * 0.5], [shade, shade, shade, 1]);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * 6.28 + rng() * 0.8;
+    const h = 0.55 + rng() * 0.35, lean = 0.12 + rng() * 0.12, w = 0.07;
+    const bx = Math.cos(a) * 0.06, bz = Math.sin(a) * 0.06;
+    const tip = [bx + Math.cos(a) * lean, h, bz + Math.sin(a) * lean];
+    const b = [0, 1, 2].map((k) => [bx + Math.cos(a + (k * 6.28) / 3) * w, 0, bz + Math.sin(a + (k * 6.28) / 3) * w]);
+    const shade = 0.88 + rng() * 0.18;
+    const c = [shade, shade, shade, 1], cb = [shade * 0.7, shade * 0.7, shade * 0.7, 1];
+    for (let k = 0; k < 3; k++) g.triC(b[k], b[(k + 1) % 3], tip, cb, cb, c);
+  }
+  // light the blades like the ground beneath them so tufts read as bright grass, not dark scratches
+  for (let i = 0; i < g.nor.length; i += 3) { g.nor[i] = 0; g.nor[i + 1] = 1; g.nor[i + 2] = 0; }
+  return g;
+}
+
+function reeds(rng) {
+  const g = new Geo();
+  for (let i = 0; i < 4; i++) {
+    const a = rng() * 6.28, r = rng() * 0.3, x = Math.cos(a) * r, z = Math.sin(a) * r;
+    const h = 1.4 + rng() * 0.9;
+    g.cyl(x, 0, z, 0.045, 0.03, h, 4, [0.42, 0.66, 0.3, 0]);
+    if (i % 2 === 0) g.cyl(x, h - 0.5, z, 0.09, 0.09, 0.4, 6, [0.52, 0.33, 0.2, 0]);
   }
   return g;
 }
 
-function rock(rng) {
+function rock(rng, season) {
   const g = new Geo();
-  g.sphere(0, 0.3, 0, 1, 1, (y) => [0.9 + y * 0.1, 0.9 + y * 0.1, 0.9 + y * 0.1, 1], 0.22, rng, 0.75);
+  const c = (y) => (season === 'winter' && y > 0.55 ? SNOW : [ROCK[0] * (0.88 + y * 0.12), ROCK[1] * (0.88 + y * 0.12), ROCK[2] * (0.88 + y * 0.12), 1]);
+  g.sphere(0, 0.3, 0, 1, 1, c, 0.22, rng, 0.75);
+  return g;
+}
+
+function log(rng) {
+  const g = new Geo();
+  g.cyl(-1.4, 0.38, 0, 0.38, 0.34, 2.8, 8, [0.48, 0.32, 0.2, 0], 'x', hexc('#D9A86C'));
+  g.cyl(0.2, 0.55, 0.25, 0.1, 0.08, 0.5, 5, [0.48, 0.32, 0.2, 0], 'z');
+  g.sphere(-0.6, 0.72, 0.05, 0.16, 1, [0.4, 0.75, 0.32, 0], 0.1, rng, 0.5);
+  return g;
+}
+
+/** Wooden fence post for the island rim. */
+function post() {
+  const g = new Geo();
+  g.box(0, 0.6, 0, 0.32, 1.2, 0.32, [0.72, 0.52, 0.34, 0]);
+  g.cyl(0, 1.2, 0, 0.23, 0, 0.3, 4, [0.78, 0.58, 0.38, 0]);
   return g;
 }
 
@@ -284,15 +351,16 @@ function fence() {
   return g;
 }
 
-function cloud(rng) {
+/** Cloud: a cluster of squashed white spheres (n = 4..8). */
+function cloud(rng, n) {
   const g = new Geo();
-  const c = (y) => [1, 1, 1, 0].map((v, i) => (i < 3 ? 0.92 + y * 0.08 : 0));
-  g.sphere(0, 0, 0, 6, 1, c, 0.1, rng, 0.7);
-  g.sphere(6, -1, 1, 4.5, 1, c, 0.1, rng, 0.7);
-  g.sphere(-6, -1.2, -0.5, 4.8, 1, c, 0.1, rng, 0.7);
-  g.sphere(2, 2.5, -1, 4.2, 1, c, 0.1, rng, 0.7);
-  g.sphere(-3, 1.8, 2, 3.8, 1, c, 0.1, rng, 0.7);
-  return g;
+  const c = [1, 1, 1, 0];
+  g.sphere(0, 0, 0, 5.5, 2, c, 0, rng, 0.62);
+  for (let i = 1; i < n; i++) {
+    const a = (i / (n - 1)) * 6.28 + rng() * 0.6, d = 4 + rng() * 3.5;
+    g.sphere(Math.cos(a) * d * 1.3, (rng() - 0.35) * 2.2, Math.sin(a) * d * 0.7, 3 + rng() * 2, 2, c, 0, rng, 0.62);
+  }
+  return g.smooth(80);
 }
 
 function bird() {
@@ -312,6 +380,14 @@ function butterflyWing() {
   const g = new Geo();
   g.tri([0, 0, -0.05], [0, 0, 0.12], [0.3, 0, 0.25], [1, 1, 1, 1]);
   g.tri([0, 0, -0.05], [0.25, 0, -0.22], [0, 0, 0.05], [1, 1, 1, 1]);
+  g.tri([0, 0, 0.02], [0, 0, 0.12], [0.2, 0, 0.16], [0.25, 0.2, 0.3, 0]);
+  return g;
+}
+
+/** Tiny flat petal / leaf for drifting seasonal particles. */
+function petal() {
+  const g = new Geo();
+  g.quad([-0.5, 0, -0.3], [0.5, 0, -0.3], [0.5, 0, 0.3], [-0.5, 0, 0.3], [1, 1, 1, 1]);
   return g;
 }
 
@@ -395,70 +471,82 @@ function mineMesh() {
 }
 
 /** Create every mesh. Returns a dictionary of Mesh instances. */
-export function createModels(r, rng) {
+export function createModels(r, rng, season = 'summer') {
   const M = {};
   M.tanks = {};
   for (const type of Object.keys(TANK_GEOM)) {
     const t = buildTank(type);
     M.tanks[type] = {
-      hull: new Mesh(r, t.hull, { capacity: 8 }),
-      turret: new Mesh(r, t.turret, { capacity: 8 }),
-      barrel: new Mesh(r, t.barrel, { capacity: 8 }),
+      hull: new Mesh(r, t.hull, { capacity: 8, outlineMax: 0.12 }),
+      turret: new Mesh(r, t.turret, { capacity: 8, outlineMax: 0.12 }),
+      barrel: new Mesh(r, t.barrel, { capacity: 8, outlineMax: 0.1 }),
     };
   }
   M.terrain = null; // set by world
   // trees are re-submitted each frame so ones hiding a tank can be drawn see-through in birds-eye view
-  const tr = tree('round', rng), tp = tree('pine', rng), tb = tree('birch', rng);
+  const tr = tree('round', rng, season), tp = tree('pine', rng, season), tf = tree('fruit', rng, season);
   M.treeRound = new Mesh(r, tr, { sway: 0.0035, capacity: 512 });
   M.treePine = new Mesh(r, tp, { sway: 0.0035, capacity: 512 });
-  M.treeBirch = new Mesh(r, tb, { sway: 0.003, capacity: 256 });
-  M.treeRoundG = new Mesh(r, tr, { sway: 0.0035, capacity: 32, transparent: true, castShadow: false, layer: 8 });
-  M.treePineG = new Mesh(r, tp, { sway: 0.0035, capacity: 32, transparent: true, castShadow: false, layer: 8 });
-  M.treeBirchG = new Mesh(r, tb, { sway: 0.003, capacity: 32, transparent: true, castShadow: false, layer: 8 });
-  M.treeBackdrop = new Mesh(r, tp, { static: true, sway: 0.0035, capacity: 512 });
-  M.bush = new Mesh(r, bush(rng), { capacity: 256 });
-  M.rock = new Mesh(r, rock(rng), { static: true, capacity: 256 });
-  M.mushroom = new Mesh(r, mushroom(rng), { static: true, capacity: 64 });
-  M.flower = new Mesh(r, flower(rng), { static: true, sway: 0.25, castShadow: false, capacity: 2048 });
-  M.grass = new Mesh(r, grass(rng), { static: true, sway: 0.32, castShadow: false, cull: false, capacity: 8192 });
+  M.treeFruit = new Mesh(r, tf, { sway: 0.0035, capacity: 256 });
+  const ghost = { sway: 0.0035, capacity: 32, transparent: true, layer: 8 };
+  M.treeRoundG = new Mesh(r, tr, ghost);
+  M.treePineG = new Mesh(r, tp, ghost);
+  M.treeFruitG = new Mesh(r, tf, ghost);
+  M.mushroomG = new Mesh(r, mushroom(rng), { capacity: 16, transparent: true, layer: 8 });
+  M.bush = new Mesh(r, bush(rng, false, season), { capacity: 256 });
+  M.bushBerry = new Mesh(r, bush(rng, season !== 'winter', season), { capacity: 256 });
+  M.rock = new Mesh(r, rock(rng, season), { static: true, capacity: 256 });
+  M.mushroom = new Mesh(r, mushroom(rng), { capacity: 64 });
+  M.toadstool = new Mesh(r, toadstool(rng), { static: true, capacity: 512, outlineMax: 0.05 });
+  M.log = new Mesh(r, log(rng), { static: true, capacity: 64 });
+  M.post = new Mesh(r, post(), { static: true, capacity: 256 });
+  M.flower = new Mesh(r, flower(rng), { static: true, sway: 0.25, outline: false, capacity: 2048 });
+  M.grass = new Mesh(r, grass(rng), { static: true, sway: 0.32, cull: false, mode: 7, capacity: 8192 });
+  M.reeds = new Mesh(r, reeds(rng), { static: true, sway: 0.08, outline: false, capacity: 256 });
   M.crate = new Mesh(r, crate(), { capacity: 64 });
   M.barrel = new Mesh(r, barrelMesh(), { capacity: 64 });
   M.hay = new Mesh(r, haybale(), { static: true, capacity: 64 });
   M.house = new Mesh(r, house(rng), { static: true, capacity: 8 });
   M.windmill = new Mesh(r, windmillTower(), { static: true, capacity: 4 });
   M.blades = new Mesh(r, windmillBlades(), { capacity: 4, cull: false });
-  M.fence = new Mesh(r, fence(), { static: true, capacity: 128 });
-  M.cloud = new Mesh(r, cloud(rng), { capacity: 32, castShadow: false });
-  M.cloudGhost = new Mesh(r, cloud(rng), { capacity: 16, transparent: true, castShadow: false, layer: 9, mode: 1 });
-  M.bird = new Mesh(r, bird(), { capacity: 64, castShadow: false });
-  M.wing = new Mesh(r, wing(), { capacity: 128, cull: false, castShadow: false });
-  M.bfly = new Mesh(r, butterflyWing(), { capacity: 128, cull: false, castShadow: false, mode: 1 });
-  M.duck = new Mesh(r, duck(rng), { capacity: 32 });
-  M.lily = new Mesh(r, lilypad(), { static: true, capacity: 64, castShadow: false });
-  M.health = new Mesh(r, healthPack(), { capacity: 32 });
-  M.ammo = new Mesh(r, ammoPack(), { capacity: 32 });
-  M.wcrate = new Mesh(r, weaponCrate(), { capacity: 32 });
+  M.fence = new Mesh(r, fence(), { static: true, capacity: 128, outlineMax: 0.06 });
+  M.clouds = [4, 6, 8].map((n) => new Mesh(r, cloud(rng, n), { capacity: 16, transparent: true, mode: 6, layer: 9 }));
+  M.bird = new Mesh(r, bird().smooth(70), { capacity: 64, outlineMax: 0.06 });
+  M.wing = new Mesh(r, wing(), { capacity: 128, cull: false });
+  M.bfly = new Mesh(r, butterflyWing(), { capacity: 256, cull: false });
+  M.petal = new Mesh(r, petal(), { capacity: 512, cull: false });
+  M.duck = new Mesh(r, duck(rng).smooth(70), { capacity: 32, outlineMax: 0.08 });
+  M.lily = new Mesh(r, lilypad(), { static: true, capacity: 128, outline: false });
+  M.health = new Mesh(r, healthPack().smooth(50), { capacity: 32 });
+  M.ammo = new Mesh(r, ammoPack().smooth(50), { capacity: 32 });
+  M.wcrate = new Mesh(r, weaponCrate().smooth(50), { capacity: 32 });
   M.gem = new Mesh(r, gem(), { capacity: 32 });
   M.chute = new Mesh(r, parachute(), { capacity: 8, cull: false });
-  M.rocket = new Mesh(r, rocketMesh(), { capacity: 64 });
-  M.mine = new Mesh(r, mineMesh(), { capacity: 64 });
+  M.rocket = new Mesh(r, rocketMesh().smooth(50), { capacity: 64, outlineMax: 0.05 });
+  M.mine = new Mesh(r, mineMesh().smooth(50), { capacity: 64 });
+  // soft contact shadows under everything (no shadow maps)
+  const blob = new Geo().blob();
+  M.blobStatic = new Mesh(r, blob, { static: true, capacity: 2048, transparent: true, mode: 5, layer: 1 });
+  M.blob = new Mesh(r, blob, { capacity: 1024, transparent: true, mode: 5, layer: 1 });
 
   const unitSphere = new Geo().sphere(0, 0, 0, 1, 1, [1, 1, 1, 1]);
   const lowSphere = new Geo().sphere(0, 0, 0, 1, 0, [1, 1, 1, 1]);
   const unitBox = new Geo().box(0, 0, 0, 1, 1, 1, [1, 1, 1, 1]);
   const zBox = new Geo().box(0, 0, 0.5, 1, 1, 1, [1, 1, 1, 1]);
-  M.shell = new Mesh(r, new Geo().sphere(0, 0, 0, 1, 1, [0.25, 0.25, 0.25, 1], 0, rng, 1), { capacity: 64 });
-  M.chunk = new Mesh(r, unitBox, { capacity: 256 });
-  M.puff = new Mesh(r, unitSphere, { capacity: 1024, transparent: true, castShadow: false, layer: 5 });
-  M.fire = new Mesh(r, unitSphere, { capacity: 1024, transparent: true, mode: 3, castShadow: false, layer: 5 });
-  M.glow = new Mesh(r, lowSphere, { capacity: 1024, transparent: true, additive: true, mode: 1, castShadow: false, layer: 6 });
-  M.spark = new Mesh(r, zBox, { capacity: 1024, transparent: true, additive: true, mode: 1, castShadow: false, layer: 6 });
-  M.beam = new Mesh(r, zBox, { capacity: 32, transparent: true, additive: true, mode: 1, castShadow: false, layer: 7 });
-  M.shock = new Mesh(r, new Geo().ring(0, 0, 0, 0.8, 1, 24, [1, 1, 1, 1]), { capacity: 64, transparent: true, additive: true, mode: 1, cull: false, castShadow: false, layer: 6 });
-  M.decal = new Mesh(r, new Geo().ring(0, 0, 0, 0, 1, 12, [1, 1, 1, 1]), { capacity: 256, transparent: true, castShadow: false, layer: 1, mode: 1 });
-  M.track = new Mesh(r, new Geo().box(0, 0, 0, 1, 0.01, 1, [1, 1, 1, 1]), { capacity: 2048, transparent: true, castShadow: false, layer: 1, mode: 1 });
-  M.teamRing = new Mesh(r, new Geo().ring(0, 0, 0, 0.82, 1, 28, [1, 1, 1, 1]), { capacity: 16, transparent: true, castShadow: false, layer: 2, mode: 1, cull: false });
-  M.bubble = new Mesh(r, unitSphere, { capacity: 8, transparent: true, additive: true, mode: 1, castShadow: false, layer: 8, cull: false });
+  const softSphere = new Geo().sphere(0, 0, 0, 1, 2, [1, 1, 1, 1]).smooth(80);
+  M.shell = new Mesh(r, new Geo().sphere(0, 0, 0, 1, 1, [0.25, 0.25, 0.3, 1], 0, rng, 1).smooth(80), { capacity: 64, outlineMax: 0.06 });
+  M.chunk = new Mesh(r, unitBox, { capacity: 512, outlineMax: 0.05 });
+  M.ball = new Mesh(r, new Geo().sphere(0, 0, 0, 1, 1, [1, 1, 1, 1]).smooth(80), { capacity: 256, outlineMax: 0.06 });
+  M.puff = new Mesh(r, softSphere, { capacity: 1024, transparent: true, layer: 5 });
+  M.fire = new Mesh(r, softSphere, { capacity: 1024, transparent: true, mode: 3, layer: 5 });
+  M.glow = new Mesh(r, lowSphere, { capacity: 1024, transparent: true, additive: true, mode: 1, layer: 6 });
+  M.spark = new Mesh(r, zBox, { capacity: 1024, transparent: true, additive: true, mode: 1, layer: 6 });
+  M.beam = new Mesh(r, zBox, { capacity: 32, transparent: true, additive: true, mode: 1, layer: 7 });
+  M.shock = new Mesh(r, new Geo().ring(0, 0, 0, 0.8, 1, 24, [1, 1, 1, 1]), { capacity: 64, transparent: true, additive: true, mode: 1, cull: false, layer: 6 });
+  M.decal = new Mesh(r, blob, { capacity: 256, transparent: true, layer: 1, mode: 5 });
+  M.track = new Mesh(r, new Geo().box(0, 0, 0, 1, 0.01, 1, [1, 1, 1, 1]), { capacity: 2048, transparent: true, layer: 1, mode: 1 });
+  M.teamRing = new Mesh(r, new Geo().ring(0, 0, 0, 0.82, 1, 28, [1, 1, 1, 1]), { capacity: 16, transparent: true, layer: 2, mode: 1, cull: false });
+  M.bubble = new Mesh(r, unitSphere, { capacity: 8, transparent: true, additive: true, mode: 1, layer: 8, cull: false });
   // light beacon over pickups: bright at the base, fading to nothing at the top (additive)
   const cone = new Geo();
   for (let i = 0; i < 12; i++) {
@@ -468,7 +556,7 @@ export function createModels(r, rng) {
     cone.triC(b0, t0, t1, [1, 1, 1, 1], [0, 0, 0, 1], [0, 0, 0, 1]);
     cone.triC(b0, t1, b1, [1, 1, 1, 1], [0, 0, 0, 1], [1, 1, 1, 1]);
   }
-  M.beacon = new Mesh(r, cone, { capacity: 64, transparent: true, additive: true, mode: 1, cull: false, castShadow: false, layer: 7 });
-  M.dash = new Mesh(r, zBox, { capacity: 256, transparent: true, mode: 1, castShadow: false, layer: 7 });
+  M.beacon = new Mesh(r, cone, { capacity: 64, transparent: true, additive: true, mode: 1, cull: false, layer: 7 });
+  M.dash = new Mesh(r, zBox, { capacity: 256, transparent: true, mode: 1, layer: 7 });
   return M;
 }

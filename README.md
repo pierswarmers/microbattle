@@ -31,9 +31,10 @@ Every setting can be passed on the command line. Run `node microbattle.js --help
 | `--no-pickups` / `--no-powerups` / `--airdrop S` | on / on / 35 | Pickups, power-ups, and seconds between supply drops |
 | `--no-lobby` / `--lobby-timeout S` | lobby on | Skip the join lobby, or start it automatically after S seconds |
 | `--split` | auto | Always use split-screen in bird's-eye view |
-| `--zoom N` / `--max-zoom N` | 52 / 150 | Bird's-eye camera height |
+| `--zoom N` / `--max-zoom N` | 38 / 150 | Bird's-eye camera height |
 | `--no-stabilizer` | on | Turret turns with the hull instead of holding its aim |
-| `--quality low\|medium\|high` / `--no-shadows` | medium | Graphics settings |
+| `--season spring\|summer\|autumn\|winter\|random` | summer | Retints the island: spring blossom and petals, summer apples, autumn leaves, winter snow and ice |
+| `--quality low\|medium\|high` | medium | Graphics quality (render resolution and grass density) |
 | `--volume F` / `--no-music` / `--mute` | 0.7 | Audio settings |
 | `--port N` / `--host H` / `--no-open` | 8080 | Server settings |
 
@@ -120,7 +121,7 @@ public/js/
   game.js     match flow, tanks, physics, weapons, pickups, cameras
   ai.js       bot brains: targeting, A* navigation, ballistics
   world.js    terrain, ponds, paths, scenery, collision and nav grids
-  gl.js       instanced WebGL2 renderer (shadows, fog, sky, toon fire)
+  gl.js       instanced WebGL2 renderer (cel shading, outlines, blob shadows, fog, sky)
   models.js   procedural low-poly meshes   geo.js  geometry builder
   fx.js       particles, decals, comic pop text   audio.js  synthesized SFX and music
   hud.js      HUD, gunner scope, minimap, lobby, menus

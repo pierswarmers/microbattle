@@ -46,6 +46,7 @@ function parseArgs(argv) {
     const key = toCamel(a);
     if (key === 'port' || key === 'host') { server[key] = val ?? argv[++i]; continue; }
     if (key === 'open') { server.open = !neg; continue; }
+    if (key === 'shadows') continue; // retired: the toy look uses blob contact shadows only
     if (!(key in OPTIONS)) { console.error(`Unknown option --${a}. Run with --help.`); process.exit(1); }
     const type = OPTIONS[key][1];
     if (type === 'bool') {

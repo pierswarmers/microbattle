@@ -4,7 +4,8 @@ import { KEYMAPS } from './input.js';
 import { m4, clamp, wrapAngle } from './math.js';
 
 const FONT = '"Arial Rounded MT Bold", "Trebuchet MS", "Verdana", sans-serif';
-const COMIC = 'Impact, "Arial Black", "Haettenschweiler", sans-serif';
+// heavy rounded comic lettering (drawn with a thick dark outline)
+const COMIC = '"Arial Rounded MT Bold", "Baloo 2", "Fredoka", "Nunito", "Arial Black", sans-serif';
 const JOIN_KEYS = ['SPACE', 'N', 'ENTER', 'GAMEPAD A'];
 
 export class HUD {
@@ -146,7 +147,7 @@ export class HUD {
       ctx.globalAlpha = a > 0.7 ? 1 - (a - 0.7) / 0.3 : 1;
       ctx.translate(p.x, p.y);
       ctx.rotate(tx.rot);
-      ctx.font = `${size}px ${COMIC}`;
+      ctx.font = `900 ${size}px ${COMIC}`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.lineJoin = 'round';
       if (!tx.small) { ctx.lineWidth = size / 3.5; ctx.strokeStyle = '#2a1033'; ctx.strokeText(tx.text, 0, 0); }
@@ -465,7 +466,7 @@ export class HUD {
       ctx.scale(pop, pop);
       ctx.rotate(Math.sin(t * 6) * 0.03);
       const size = a.big ? 96 : 40;
-      ctx.font = `${size}px ${COMIC}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+      ctx.font = `900 ${size}px ${COMIC}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
       ctx.lineWidth = size / 4; ctx.strokeStyle = '#2a1033'; ctx.strokeText(a.text, 0, 0);
       ctx.lineWidth = size / 10; ctx.strokeStyle = '#fff'; ctx.strokeText(a.text, 0, 0);
       ctx.fillStyle = a.col || '#ffdd33'; ctx.fillText(a.text, 0, 0);
@@ -482,7 +483,7 @@ export class HUD {
       ctx.translate(W / 2, H * 0.4);
       const s = 1 + f * 0.6;
       ctx.scale(s, s);
-      ctx.font = `120px ${COMIC}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = `900 120px ${COMIC}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.lineWidth = 22; ctx.strokeStyle = '#2a1033'; ctx.strokeText(c, 0, 0);
       ctx.lineWidth = 8; ctx.strokeStyle = '#fff'; ctx.strokeText(c, 0, 0);
       ctx.fillStyle = ['#59e666', '#ffd133', '#ff5247'][c - 1]; ctx.fillText(c, 0, 0);
@@ -559,7 +560,7 @@ export class HUD {
     ctx.translate(W / 2, H * 0.13);
     ctx.rotate(Math.sin(t * 1.3) * 0.02);
     const title = 'MICRO BATTLE';
-    ctx.font = `${Math.min(110, W / 9)}px ${COMIC}`;
+    ctx.font = `900 ${Math.min(110, W / 9)}px ${COMIC}`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
     const letters = title.split('');
     const total = ctx.measureText(title).width;

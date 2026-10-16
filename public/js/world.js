@@ -1,9 +1,21 @@
-// Procedural battlefield: terrain, ponds, paths, forests, farm, decorations, collision + nav grids.
+// Procedural battlefield: a floating tiled island diorama with cliffs, ponds, paths, forests, farm,
+// decorations, seasons, contact shadows, collision + nav grids.
 import { Geo, T } from './geo.js';
-import { Mesh } from './gl.js';
-import { m4, makeNoise, makeRng, clamp, lerp, smooth } from './math.js';
+import { Mesh, hex } from './gl.js';
+import { m4, makeNoise, makeRng, clamp, lerp, smooth, alignToNormal } from './math.js';
 
 export const WATER_LEVEL = -1.2;
+
+const DIRT = hex('#B88754'), STRAW = hex('#C7A866'), GRASS = hex('#75D152'), GRASS2 = hex('#61BD40');
+const CLIFF = ['#9E6B45', '#785238', '#664733', '#4F3727'].map(hex);
+const EDGE_H = 0.4;
+// colours that change with the season (ground tweaks, foliage multipliers, water, falling things)
+const SEASONS = {
+  spring: { grass: hex('#86DB5A'), grass2: hex('#6CC94A'), foliage: [[1.05, 1.06, 0.98], [1.0, 1.04, 0.92], [1.08, 1.05, 1.0]], water: hex('#5AAEF4'), fall: [[1, 0.72, 0.84], [1, 0.84, 0.92], [1, 1, 1]], fallN: 140 },
+  summer: { grass: GRASS, grass2: GRASS2, foliage: [[1, 1, 1], [0.94, 0.97, 0.94], [1.05, 1.02, 1]], water: hex('#54A8F2'), fall: null, fallN: 0 },
+  autumn: { grass: hex('#A6C850'), grass2: hex('#94B445'), foliage: [[1.88, 0.63, 0.47], [1.75, 0.37, 0.41], [1.9, 0.94, 0.57], [1.6, 0.8, 0.45]], water: hex('#4F9FE6'), fall: [[0.96, 0.55, 0.2], [0.88, 0.3, 0.16], [0.98, 0.78, 0.25]], fallN: 120 },
+  winter: { grass: hex('#E4EEF2'), grass2: hex('#D2E4E8'), foliage: [[0.82, 0.88, 0.92], [0.78, 0.86, 0.9]], water: hex('#BCE4F6'), fall: [[1, 1, 1]], fallN: 160 },
+};
 
 export class World {
   constructor(renderer, models, cfg) {
@@ -22,11 +34,14 @@ export class World {
     this.paths = [];
     this.spawns = [];
     this.pickupSpots = [];
-    this.ambient = { birds: [], flies: [], ducks: [], clouds: [], blades: [] };
+    this.ambient = { birds: [], flies: [], ducks: [], clouds: [], blades: [], fall: [] };
+    this.season = SEASONS[cfg.season] ? cfg.season : 'summer';
+    this.S = SEASONS[this.season];
     this.tmpM = m4.create();
     this.layout();
     this.buildHeights();
     this.buildTerrainMesh();
+    this.buildCliffs();
     this.buildWater();
     this.decorate();
     this.buildNav();
@@ -102,14 +117,15 @@ export class World {
         h = lerp(h, -4.5, k * 1.15 > 1 ? 1 : k * 1.15);
       }
     }
-    if (e > 0.84) { const k = Math.min((e - 0.84) / 0.16, 1.6); h += k * k * 30 + n(x * 0.08, z * 0.08) * k * 6; }
+    // the island rim settles to a level shelf so the cliff slabs meet it cleanly
+    if (e > 0.88) h = lerp(h, EDGE_H, smooth(clamp((e - 0.88) / 0.1, 0, 1)));
     return h;
   }
 
   buildHeights() {
-    // the height grid extends past the playable area so the horizon is mountains, never a void
+    // the island ends at the map edge and floats in the sky
     const C = (this.hc = 2.5);
-    this.ext = Math.ceil((this.half + 70) / C) * C;
+    this.ext = Math.ceil(this.half / C) * C;
     const N = (this.hn = Math.round((2 * this.ext) / C) + 1);
     this.hgt = new Float32Array(N * N);
     this.pathD = new Float32Array(N * N);
@@ -151,63 +167,146 @@ export class World {
   isWater(x, z) { return this.heightAt(x, z) < WATER_LEVEL + 0.15; }
   inBounds(x, z, m = 0) { return Math.abs(x) < this.half * 0.86 - m && Math.abs(z) < this.half * 0.86 - m; }
 
-  groundColor(x, z, h, pd, slope) {
+  /** 0 = bare dirt, 0.5 = dry straw, 1 = lush grass. Drives both tile colour and grass tufts. */
+  growthAt(x, z, h, pd, slope) {
     const n = this.noise;
-    const v = n(x * 0.05 + 9, z * 0.05 + 3);
     const meadow = n.fbm(x * 0.02 + 70, z * 0.02 - 20, 3);
-    let c = [lerp(0.4, 0.52, v), lerp(0.7, 0.8, v), lerp(0.27, 0.3, v)];
-    if (meadow > 0.6) { const k = smooth(clamp((meadow - 0.6) * 6, 0, 1)); c = [lerp(c[0], 0.68, k), lerp(c[1], 0.82, k), lerp(c[2], 0.3, k)]; }
-    const forest = this.forestDensity(x, z);
-    if (forest > 0.55) { const k = clamp((forest - 0.55) * 4, 0, 1); c = [lerp(c[0], 0.3, k), lerp(c[1], 0.56, k), lerp(c[2], 0.24, k)]; }
-    if (pd < 4.6) { const k = 1 - smooth(clamp((pd - 2.4) / 2.2, 0, 1)); c = [lerp(c[0], 0.78, k), lerp(c[1], 0.62, k), lerp(c[2], 0.4, k)]; }
-    if (h < WATER_LEVEL + 0.9) { const k = clamp((WATER_LEVEL + 0.9 - h) / 0.8, 0, 1); c = [lerp(c[0], 0.95, k), lerp(c[1], 0.86, k), lerp(c[2], 0.6, k)]; }
-    if (h < WATER_LEVEL - 0.6) c = [0.62, 0.62, 0.45];
-    if (slope > 0.7) { const k = smooth(clamp((slope - 0.7) * 1.5, 0, 0.8)); c = [lerp(c[0], 0.58, k), lerp(c[1], 0.6, k), lerp(c[2], 0.42, k)]; }
-    if (h > 24) { const k = smooth(clamp((h - 24) / 8, 0, 1)); c = [lerp(c[0], 0.98, k), lerp(c[1], 0.98, k), lerp(c[2], 1, k)]; }
-    const j = 0.98 + this.rng() * 0.04;
-    return [c[0] * j, c[1] * j, c[2] * j, 0];
+    let g = 0.72 + meadow * 0.35 + (n(x * 0.05 + 9, z * 0.05 + 3) - 0.5) * 0.25;
+    if (pd < 5) g = Math.min(g, lerp(0.02, 1, smooth(clamp((pd - 2.2) / 2.8, 0, 1))));
+    if (h < WATER_LEVEL + 1.1) g = Math.min(g, lerp(0.35, 1, clamp((h - WATER_LEVEL - 0.3) / 0.8, 0, 1)));
+    if (slope > 0.6) g -= clamp((slope - 0.6) * 0.8, 0, 0.4);
+    return clamp(g, 0, 1);
+  }
+
+  groundColor(x, z, h, g) {
+    const S = this.S;
+    if (h < WATER_LEVEL - 0.4) return [0.42, 0.52, 0.5];
+    const lush = smooth(clamp((this.forestDensity(x, z) - 0.45) * 4, 0, 1));
+    const grass = [lerp(S.grass[0], S.grass2[0], lush), lerp(S.grass[1], S.grass2[1], lush), lerp(S.grass[2], S.grass2[2], lush)];
+    if (g < 0.5) { const k = g / 0.5; return [lerp(DIRT[0], STRAW[0], k), lerp(DIRT[1], STRAW[1], k), lerp(DIRT[2], STRAW[2], k)]; }
+    const k = smooth(clamp((g - 0.5) / 0.3, 0, 1));
+    return [lerp(STRAW[0], grass[0], k), lerp(STRAW[1], grass[1], k), lerp(STRAW[2], grass[2], k)];
   }
 
   forestDensity(x, z) { return this.noise.fbm(x * 0.009 + 200, z * 0.009 - 100, 3); }
 
-  buildTerrainMesh() {
-    const g = new Geo();
+  slopeAt(i, j) {
     const C = this.hc, N = this.hn;
-    const E = this.ext;
-    const P = (i, j) => [-E + i * C, this.hgt[j * N + i], -E + j * C];
-    // per-vertex colours give soft blends between grass, paths, sand and rock
-    const cols = new Array(N * N);
-    const H = (i, j) => this.hgt[clamp(j, 0, N - 1) * N + clamp(i, 0, N - 1)];
-    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
-      const slope = Math.max(Math.abs(H(i + 1, j) - H(i - 1, j)), Math.abs(H(i, j + 1) - H(i, j - 1))) / (2 * C);
-      cols[j * N + i] = this.groundColor(-E + i * C, -E + j * C, this.hgt[j * N + i], this.pathD[j * N + i], slope);
-    }
+    const H = (a, b) => this.hgt[clamp(b, 0, N - 1) * N + clamp(a, 0, N - 1)];
+    return Math.max(Math.abs(H(i + 1, j) - H(i - 1, j)), Math.abs(H(i, j + 1) - H(i, j - 1))) / (2 * C);
+  }
+
+  /**
+   * The ground is a grid of slightly separated tiles, each one flat-coloured with a ±3% checkerboard
+   * nudge, sitting on a darker soil underlay that shows through the seams.
+   */
+  buildTerrainMesh() {
+    const C = this.hc, N = this.hn, E = this.ext;
+    const cells = (N - 1) * (N - 1);
+    const pos = new Float32Array(cells * 12 * 3), nor = new Float32Array(cells * 12 * 3), col = new Float32Array(cells * 12 * 4);
+    let v = 0;
+    const put = (x, y, z, n, c) => {
+      pos[v * 3] = x; pos[v * 3 + 1] = y; pos[v * 3 + 2] = z;
+      nor[v * 3] = n[0]; nor[v * 3 + 1] = n[1]; nor[v * 3 + 2] = n[2];
+      col[v * 4] = c[0]; col[v * 4 + 1] = c[1]; col[v * 4 + 2] = c[2]; col[v * 4 + 3] = 0;
+      v++;
+    };
+    const gap = 0.05;
+    this.growth = new Float32Array(cells);
     for (let j = 0; j < N - 1; j++) for (let i = 0; i < N - 1; i++) {
-      const a = P(i, j), b = P(i + 1, j), c = P(i, j + 1), d = P(i + 1, j + 1);
-      const ca = cols[j * N + i], cb = cols[j * N + i + 1], cc = cols[(j + 1) * N + i], cd = cols[(j + 1) * N + i + 1];
-      // tri 1: a, c, d  (00, 01, 11); tri 2: a, d, b (00, 11, 10)
-      g.triC(a, c, d, ca, cc, cd);
-      g.triC(a, d, b, ca, cd, cb);
+      const x0 = -E + i * C, z0 = -E + j * C, x1 = x0 + C, z1 = z0 + C;
+      const cx = x0 + C / 2, cz = z0 + C / 2;
+      const h00 = this.hgt[j * N + i], h10 = this.hgt[j * N + i + 1], h01 = this.hgt[(j + 1) * N + i], h11 = this.hgt[(j + 1) * N + i + 1];
+      const hc = (h00 + h10 + h01 + h11) / 4;
+      const pd = Math.min(this.pathD[j * N + i], this.pathD[j * N + i + 1], this.pathD[(j + 1) * N + i], this.pathD[(j + 1) * N + i + 1]);
+      const g = this.growthAt(cx, cz, hc, pd, this.slopeAt(i, j));
+      this.growth[j * (N - 1) + i] = g;
+      const base = this.groundColor(cx, cz, hc, g);
+      const k = ((i + j) & 1 ? 1.03 : 0.97) * (0.985 + this.rng() * 0.03);
+      const c = [base[0] * k, base[1] * k, base[2] * k];
+      // one normal per tile so the cel bands never split a tile along its diagonal
+      let nx = (h00 + h01 - h10 - h11) / (2 * C), nz = (h00 + h10 - h01 - h11) / (2 * C);
+      const nl = Math.hypot(nx, 1, nz); const n = [nx / nl, 1 / nl, nz / nl];
+      // seam underlay (full cell, lowered, darker)
+      const dk = [base[0] * 0.74, base[1] * 0.72, base[2] * 0.7], d = 0.14;
+      put(x0, h00 - d, z0, n, dk); put(x0, h01 - d, z1, n, dk); put(x1, h11 - d, z1, n, dk);
+      put(x0, h00 - d, z0, n, dk); put(x1, h11 - d, z1, n, dk); put(x1, h10 - d, z0, n, dk);
+      // the tile itself, inset by the seam
+      const ax = x0 + gap, az = z0 + gap, bx = x1 - gap, bz = z1 - gap;
+      const ya = this.heightAt(ax, az), yb = this.heightAt(bx, az), yc = this.heightAt(ax, bz), yd = this.heightAt(bx, bz);
+      put(ax, ya, az, n, c); put(ax, yc, bz, n, c); put(bx, yd, bz, n, c);
+      put(ax, ya, az, n, c); put(bx, yd, bz, n, c); put(bx, yb, az, n, c);
     }
-    this.terrain = new Mesh(this.r, g, { static: true, castShadow: false });
+    this.terrain = new Mesh(this.r, { pos, nor, col }, { static: true, outline: false });
     this.terrain.add(m4.create());
+  }
+
+  tileGrowth(x, z) {
+    const N = this.hn - 1;
+    const i = clamp(Math.floor((x + this.ext) / this.hc), 0, N - 1), j = clamp(Math.floor((z + this.ext) / this.hc), 0, N - 1);
+    return this.growth[j * N + i];
+  }
+
+  /** The island edge steps down in layered slabs, each narrower and darker. */
+  buildCliffs() {
+    const g = new Geo();
+    const E = this.ext;
+    let top = EDGE_H + 0.02;
+    const steps = [[0, 3.2], [2.2, 3.4], [5.0, 3.6], [8.4, 3.2]];
+    steps.forEach(([inset, h], k) => {
+      const R = E - inset, b = top - h, c = [...CLIFF[k], 0];
+      const p = (x, y, z) => [x, y, z];
+      g.quad(p(-R, b, R), p(R, b, R), p(R, top, R), p(-R, top, R), c);
+      g.quad(p(R, b, -R), p(-R, b, -R), p(-R, top, -R), p(R, top, -R), c);
+      g.quad(p(R, b, R), p(R, b, -R), p(R, top, -R), p(R, top, R), c);
+      g.quad(p(-R, b, -R), p(-R, b, R), p(-R, top, R), p(-R, top, -R), c);
+      // underside of the slab above, between it and this narrower one
+      if (k > 0) {
+        const r0 = E - steps[k - 1][0];
+        const lip = [CLIFF[k - 1][0] * 0.7, CLIFF[k - 1][1] * 0.7, CLIFF[k - 1][2] * 0.7, 0];
+        // (faces down: it is the underside of the wider slab above)
+        g.quad(p(-R, top, R), p(R, top, R), p(r0, top, r0), p(-r0, top, r0), lip);
+        g.quad(p(R, top, -R), p(-R, top, -R), p(-r0, top, -r0), p(r0, top, -r0), lip);
+        g.quad(p(R, top, R), p(R, top, -R), p(r0, top, -r0), p(r0, top, r0), lip);
+        g.quad(p(-R, top, -R), p(-R, top, R), p(-r0, top, r0), p(-r0, top, -r0), lip);
+      }
+      if (k === steps.length - 1) g.quad(p(-R, b, -R), p(R, b, -R), p(R, b, R), p(-R, b, R), c);
+      top = b;
+    });
+    this.cliffs = new Mesh(this.r, g, { static: true, outline: false });
+    this.cliffs.add(m4.create());
   }
 
   buildWater() {
     const g = new Geo();
-    const c = [0.3, 0.62, 0.9, 0];
+    const c = [1, 1, 1, 1];
+    const C = this.hc, gap = 0.05, E = this.ext;
     for (const p of this.ponds) {
-      const R = p.r * 1.5 + 2, step = 3;
-      for (let z = -R; z < R; z += step) for (let x = -R; x < R; x += step) {
-        if (Math.hypot(x + step / 2, z + step / 2) > R + 2) continue;
-        const A = [p.x + x, 0, p.z + z], B = [p.x + x + step, 0, p.z + z], Cc = [p.x + x, 0, p.z + z + step], D = [p.x + x + step, 0, p.z + z + step];
+      const R = p.r * 1.5 + 2;
+      const i0 = Math.floor((p.x - R + E) / C), i1 = Math.ceil((p.x + R + E) / C);
+      const j0 = Math.floor((p.z - R + E) / C), j1 = Math.ceil((p.z + R + E) / C);
+      for (let j = j0; j < j1; j++) for (let i = i0; i < i1; i++) {
+        const x0 = -E + i * C + gap, z0 = -E + j * C + gap, x1 = x0 + C - 2 * gap, z1 = z0 + C - 2 * gap;
+        // only tiles that actually dip below the waterline
+        if (Math.min(this.heightAt(x0, z0), this.heightAt(x1, z0), this.heightAt(x0, z1), this.heightAt(x1, z1)) > WATER_LEVEL) continue;
+        const A = [x0, 0, z0], B = [x1, 0, z0], Cc = [x0, 0, z1], D = [x1, 0, z1];
         g.tri(A, Cc, D, c); g.tri(A, D, B, c);
       }
     }
     if (g.pos.length) {
-      this.water = new Mesh(this.r, g, { static: true, mode: 2, transparent: true, castShadow: false, layer: 3 });
-      this.water.add(m4.compose(m4.create(), 0, WATER_LEVEL, 0), 1, 1, 1, 0.78);
+      const w = this.S.water;
+      this.water = new Mesh(this.r, g, { static: true, mode: 2, transparent: true, layer: 3 });
+      this.water.add(m4.compose(m4.create(), 0, WATER_LEVEL, 0), w[0], w[1], w[2], this.season === 'winter' ? 0.96 : 0.9);
     }
+  }
+
+  /** Soft contact shadow, nudged away from the sun by the object's height. */
+  blob(mesh, x, z, r, h = 1, a = 0.22) {
+    const off = Math.min(h * 0.1, r * 0.45);
+    x -= 0.815 * off; z -= 0.58 * off;
+    const n = this.normalAt(x, z, this._bn || (this._bn = [0, 1, 0]));
+    alignToNormal(this.tmpM, x, this.heightAt(x, z) + 0.05, z, n, 0, r, 1, r);
+    mesh.add(this.tmpM, 0.07, 0.17, 0.06, a); // translucent dark green
   }
 
   // ---------- obstacles ----------
@@ -274,8 +373,9 @@ export class World {
 
   // ---------- decoration ----------
   decorate() {
-    const rng = this.rng, M = this.M, H = this.half, m = this.tmpM;
+    const rng = this.rng, M = this.M, H = this.half, m = this.tmpM, S = this.S;
     const dens = this.cfg.trees;
+    const B = M.blobStatic;
     const place = (n, r, opts, fn) => {
       let placed = 0, tries = 0;
       while (placed < n && tries++ < n * 30) {
@@ -286,11 +386,17 @@ export class World {
         placed++;
       }
     };
+    const foliage = () => {
+      const f = S.foliage[Math.floor(rng() * S.foliage.length)];
+      const j = 0.94 + rng() * 0.1;
+      return [f[0] * j, f[1] * j, f[2] * j];
+    };
 
     // --- farm in the centre ---
     const house = (x, z, yaw) => {
       const y = this.heightAt(x, z) - 0.2;
-      M.house.add(m4.compose(m, x, y, z, yaw), 0.88, 0.32, 0.28, 1);
+      M.house.add(m4.compose(m, x, y, z, yaw), 0.95, 0.36, 0.32, 1);
+      this.blob(B, x, z, 5.6, 6);
       // approximate the house with a few circles
       const c = Math.cos(yaw), s = Math.sin(yaw);
       for (const ox of [-2.4, 0, 2.4]) this.addObstacle({ x: x + c * ox, z: z - s * ox, r: 2.8, top: y + 6, kind: 'house' });
@@ -299,11 +405,13 @@ export class World {
     const wmX = 11, wmZ = -9;
     const wy = this.heightAt(wmX, wmZ) - 0.2;
     M.windmill.add(m4.compose(m, wmX, wy, wmZ, -0.6));
+    this.blob(B, wmX, wmZ, 4.2, 10);
     this.addObstacle({ x: wmX, z: wmZ, r: 3.2, top: wy + 14, kind: 'windmill' });
     this.ambient.blades.push({ x: wmX + Math.sin(-0.6) * 2.4, y: wy + 10.5, z: wmZ + Math.cos(-0.6) * 2.4, yaw: -0.6, a: 0 });
     for (let i = 0; i < 6; i++) {
       const x = -2 + i * 2.2, z = 16 + (i % 2) * 2.2;
       M.hay.add(m4.compose(m, x, this.heightAt(x, z) - 0.1, z, 0.2 * i));
+      this.blob(B, x - 0.9, z, 1.5, 1.8);
       this.addObstacle({ x, z, r: 1.2, top: this.heightAt(x, z) + 1.8, kind: 'hay' });
     }
     // fences along the farm loop road
@@ -315,52 +423,87 @@ export class World {
       this.addObstacle({ x, z, r: 1.1, top: this.heightAt(x, z) + 1.2, kind: 'fence', soft: true });
     }
 
-    // --- rocks & boulders ---
-    place(Math.round(70 * dens), 2.5, { gap: 2 }, (x, z, h) => {
-      const s = rng.range(1.2, 3.6);
-      const g = rng.range(0.75, 1.0);
-      M.rock.add(m4.compose(m, x, h - 0.2, z, rng() * 6.28, rng() * 0.2, 0, s, s * rng.range(0.7, 1.2), s), g, g * 0.98, g * 0.95);
+    // --- wooden posts along the island rim ---
+    const E = this.ext - 1.4;
+    for (let side = 0; side < 4; side++) {
+      for (let t = -E + 4; t < E - 4; t += 6.5) {
+        if (this.noise(t * 0.04 + side * 17, side * 3.1) < 0.52) continue; // a few short runs, not a wall
+        const x = side === 0 ? t : side === 1 ? t : side === 2 ? E : -E;
+        const z = side === 0 ? E : side === 1 ? -E : t;
+        const h = this.heightAt(x, z);
+        M.post.add(m4.compose(m, x, h - 0.1, z, rng() * 0.3, (rng() - 0.5) * 0.12, (rng() - 0.5) * 0.12, rng.range(0.9, 1.15)));
+        this.blob(B, x, z, 0.45, 1.2);
+      }
+    }
+
+    // --- rocks: little clusters of lumpy boulders ---
+    place(Math.round(55 * dens), 2.5, { gap: 2 }, (x, z, h) => {
+      const s = rng.range(1.2, 3.4);
+      const g = rng.range(0.92, 1.05);
+      M.rock.add(m4.compose(m, x, h - 0.2, z, rng() * 6.28, rng() * 0.2, 0, s, s * rng.range(0.7, 1.2), s), g, g, g);
+      this.blob(B, x, z, s * 1.25, s);
       this.addObstacle({ x, z, r: s * 0.95, top: h + s * 0.9, kind: 'rock' });
+      const n = rng.int(1, 3);
+      for (let i = 0; i < n; i++) {
+        const a = rng() * 6.28, d = s * rng.range(1.0, 1.4), ss = s * rng.range(0.25, 0.45);
+        const px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d, ph = this.heightAt(px, pz);
+        if (ph < WATER_LEVEL + 0.5) continue;
+        M.rock.add(m4.compose(m, px, ph - 0.1, pz, rng() * 6.28, 0, 0, ss), g, g, g);
+        this.blob(B, px, pz, ss * 1.3, ss);
+      }
     });
 
     // --- trees: dense forests + scattered singles ---
     this.trees = [];
-    const foliage = [[0.42, 0.78, 0.3], [0.32, 0.66, 0.28], [0.55, 0.82, 0.3], [0.95, 0.62, 0.2], [0.98, 0.42, 0.25], [0.8, 0.85, 0.3]];
+    const addTree = (x, z, h, kind, s, solid) => {
+      const col = kind === 1 ? (this.season === 'winter' ? [0.9, 0.95, 0.95] : [1, 1, 1]) : foliage();
+      const top = h + (kind === 1 ? 5.7 : 6.5) * s;
+      // contact shadows for trees and giant mushrooms are drawn per frame so they fade with a ghosted prop
+      this.trees.push({ kind, x, z, s, top, col, br: (kind === 1 ? 2.2 : 2.6) * s, m: m4.compose(m4.create(), x, h - 0.1, z, rng() * 6.28, 0, 0, s) });
+      if (solid) this.addObstacle({ x, z, r: 0.7 * s, top, kind: 'tree' });
+    };
     place(Math.round(340 * dens), 1.4, {
       gap: 2.2,
       accept: (x, z) => { const f = this.forestDensity(x, z); return rng() < (f > 0.55 ? 0.95 : 0.1); },
     }, (x, z, h) => {
-      const kind = rng() < 0.45 ? 1 : rng() < 0.75 ? 0 : 2;
-      const s = rng.range(0.9, 1.5);
-      const col = rng() < 0.12 ? foliage[3 + Math.floor(rng() * 3)] : foliage[Math.floor(rng() * 3)];
-      this.trees.push({ kind, x, z, s, top: h + 7 * s, col, m: m4.compose(m4.create(), x, h - 0.1, z, rng() * 6.28, 0, 0, s) });
-      this.addObstacle({ x, z, r: 0.7 * s, top: h + 7 * s, kind: 'tree' });
+      const kind = rng() < 0.42 ? 1 : rng() < 0.7 ? 0 : 2;
+      addTree(x, z, h, kind, rng.range(0.9, 1.5), true);
     });
-    // backdrop trees on the border hills (no collision needed — unreachable)
-    for (let i = 0; i < 260 * dens; i++) {
-      const side = Math.floor(rng() * 4), t = rng.range(-H, H), d = rng.range(H * 0.88, H * 1.02);
+    // a ring of trees on the unreachable rim (no collision needed)
+    for (let i = 0; i < 140 * dens; i++) {
+      const side = Math.floor(rng() * 4), t = rng.range(-H * 0.95, H * 0.95), d = rng.range(H * 0.88, H * 0.96);
       const x = side === 0 ? t : side === 1 ? t : side === 2 ? d : -d;
       const z = side === 0 ? d : side === 1 ? -d : t;
-      const s = rng.range(1.2, 2.0);
-      const col = foliage[Math.floor(rng() * 3)];
-      M.treeBackdrop.add(m4.compose(m, x, this.heightAt(x, z) - 0.2, z, rng() * 6.28, 0, 0, s), col[0] * 0.9, col[1] * 0.9, col[2] * 0.9);
+      if (this.heightAt(x, z) < WATER_LEVEL + 0.7) continue;
+      addTree(x, z, this.heightAt(x, z), rng() < 0.5 ? 1 : rng() < 0.7 ? 0 : 2, rng.range(1.0, 1.6), false);
     }
 
     // --- giant mushrooms (whimsy!) ---
+    this.mushrooms = [];
     place(Math.round(22 * dens), 2, { gap: 3 }, (x, z, h) => {
       const s = rng.range(0.8, 1.6);
-      const c = rng() < 0.75 ? [1, 0.2, 0.18] : [0.65, 0.35, 1];
-      M.mushroom.add(m4.compose(m, x, h - 0.1, z, rng() * 6.28, (rng() - 0.5) * 0.15, (rng() - 0.5) * 0.15, s), c[0], c[1], c[2]);
+      const c = rng() < 0.8 ? [0.95, 0.16, 0.14] : [0.65, 0.35, 1];
+      this.mushrooms.push({ x, z, s, top: h + 3.5 * s, col: c, br: 2.1 * s, m: m4.compose(m4.create(), x, h - 0.1, z, rng() * 6.28, (rng() - 0.5) * 0.15, (rng() - 0.5) * 0.15, s) });
       this.addObstacle({ x, z, r: 0.7 * s, top: h + 3.5 * s, kind: 'mushroom' });
+    });
+
+    // --- fallen logs in and around the woods ---
+    place(Math.round(16 * dens), 1.6, { gap: 1.5, accept: (x, z) => this.forestDensity(x, z) > 0.45 }, (x, z, h) => {
+      const yaw = rng() * 6.28, s = rng.range(0.85, 1.2);
+      M.log.add(m4.compose(m, x, h - 0.12, z, yaw, 0, 0, s));
+      this.blob(B, x, z, 1.7 * s, 0.6);
+      const c = Math.cos(yaw), sn = Math.sin(yaw);
+      for (const o of [-0.9, 0.9]) this.addObstacle({ x: x + c * o * s, z: z - sn * o * s, r: 0.7 * s, top: h + 0.8 * s, kind: 'rock' });
     });
 
     // --- destructibles ---
     this.bushes = [];
     place(Math.round(160 * dens), 1.3, { gap: 0.8, pathClear: 3.5 }, (x, z, h) => {
       const s = rng.range(0.9, 1.6);
-      const g = rng.range(0.85, 1.1);
-      const o = this.addObstacle({ x, z, r: 0.9 * s, top: h + 1.3 * s, kind: 'bush', soft: true, hp: 1, s, yaw: rng() * 6.28, col: [0.38 * g, 0.72 * g, 0.3 * g], y: h - 0.1, squash: 0 });
-      this.bushes.push(o);
+      const g = rng.range(0.9, 1.08);
+      const base = this.season === 'autumn' ? [0.62, 0.62, 0.26] : this.season === 'winter' ? [0.4, 0.58, 0.42] : [0.42, 0.78, 0.32];
+      this.addObstacle({ x, z, r: 0.9 * s, top: h + 1.3 * s, kind: 'bush', soft: true, hp: 1, s, yaw: rng() * 6.28, col: [base[0] * g, base[1] * g, base[2] * g], y: h - 0.1, squash: 0, berries: rng() < 0.35 });
+      this.bushes.push(this.obstacles[this.obstacles.length - 1]);
     });
     this.crates = [];
     place(Math.round(36 * dens), 1.3, { gap: 1.5, spawnClear: 20 }, (x, z, h) => {
@@ -381,11 +524,13 @@ export class World {
       }
     });
 
-    // --- small non-colliding details: flowers, grass, lily pads ---
-    const petal = [[1, 0.35, 0.45], [1, 0.85, 0.2], [0.65, 0.45, 1], [1, 1, 1], [1, 0.55, 0.15], [0.4, 0.7, 1]];
+    // --- small non-colliding details: flowers, toadstools, grass tufts, lily pads, reeds ---
+    const petal = [[1, 0.45, 0.65], [1, 0.86, 0.25], [0.74, 0.58, 1], [1, 1, 1], [1, 0.6, 0.22], [0.45, 0.75, 1]];
     const gq = this.cfg.quality === 'low' ? 0.4 : this.cfg.quality === 'high' ? 1.4 : 1;
+    this.flowers = [];
     let nf = 0, tries = 0;
-    while (nf < 1400 * gq && tries++ < 20000) {
+    const flowerN = this.season === 'winter' ? 0 : this.season === 'autumn' ? 500 : this.season === 'spring' ? 1800 : 1400;
+    while (nf < flowerN * gq && tries++ < 20000) {
       // flowers come in little clumps
       const cx = rng.range(-H * 0.85, H * 0.85), cz = rng.range(-H * 0.85, H * 0.85);
       const meadow = this.noise.fbm(cx * 0.02 + 70, cz * 0.02 - 20, 3);
@@ -397,31 +542,47 @@ export class World {
         if (h < WATER_LEVEL + 0.8 || this.pathDist(x, z) < 3) continue;
         const s = rng.range(0.9, 1.6);
         M.flower.add(m4.compose(m, x, h - 0.05, z, rng() * 6.28, 0, 0, s), col[0], col[1], col[2]);
+        if (k === 0) this.flowers.push({ x, z, y: h + 0.75 * s });
         nf++;
       }
     }
-    for (let i = 0; i < 7000 * gq; i++) {
-      const x = rng.range(-H * 0.9, H * 0.9), z = rng.range(-H * 0.9, H * 0.9);
+    for (let i = 0; i < 160 * dens * gq; i++) {
+      const x = rng.range(-H * 0.85, H * 0.85), z = rng.range(-H * 0.85, H * 0.85);
+      if (this.forestDensity(x, z) < 0.5 && rng() > 0.2) continue;
       const h = this.heightAt(x, z);
-      if (h < WATER_LEVEL + 0.5 || h > 16 || this.pathDist(x, z) < 3) continue;
-      const s = rng.range(0.8, 1.4);
-      const v = this.noise(x * 0.05 + 9, z * 0.05 + 3);
-      M.grass.add(m4.compose(m, x, h - 0.05, z, rng() * 6.28, 0, 0, s, s * rng.range(0.8, 1.4), s), lerp(0.42, 0.6, v), lerp(0.75, 0.88, v), 0.3);
+      if (h < WATER_LEVEL + 0.8 || this.pathDist(x, z) < 3) continue;
+      const s = rng.range(0.8, 1.6);
+      M.toadstool.add(m4.compose(m, x, h - 0.05, z, rng() * 6.28, (rng() - 0.5) * 0.3, (rng() - 0.5) * 0.3, s));
+    }
+    const tuftCol = this.season === 'winter' ? [0.86, 0.93, 0.96] : null;
+    for (let i = 0; i < 9000 * gq; i++) {
+      const x = rng.range(-H * 0.95, H * 0.95), z = rng.range(-H * 0.95, H * 0.95);
+      const h = this.heightAt(x, z);
+      if (h < WATER_LEVEL + 0.5) continue;
+      // tufts grow taller and denser with the ground's growth
+      const g = this.tileGrowth(x, z);
+      if (g < 0.35 || rng() > g * g) continue;
+      const s = rng.range(0.75, 1.15) * (0.55 + g * 0.75);
+      const c = tuftCol || this.groundColor(x, z, h, Math.min(1, g + 0.1));
+      const j = 1.05 + rng() * 0.12;
+      M.grass.add(m4.compose(m, x, h - 0.05, z, rng() * 6.28, 0, 0, s, s * rng.range(0.85, 1.35), s), c[0] * j, c[1] * j, c[2] * j);
     }
     for (const p of this.ponds) {
-      for (let i = 0; i < 9; i++) {
-        const a = rng() * 6.28, d = rng.range(2, p.r * 1.2);
+      for (let i = 0; i < 12; i++) {
+        const a = rng() * 6.28, d = rng.range(2, p.r * 1.25);
         const x = p.x + Math.cos(a) * d, z = p.z + Math.sin(a) * d;
-        if (this.heightAt(x, z) > WATER_LEVEL - 0.3) continue;
-        M.lily.add(m4.compose(m, x, WATER_LEVEL + 0.05, z, rng() * 6.28, 0, 0, rng.range(0.6, 1.3)));
+        if (this.heightAt(x, z) > WATER_LEVEL - 0.3 || this.season === 'winter') continue;
+        M.lily.add(m4.compose(m, x, WATER_LEVEL + 0.04, z, rng() * 6.28, 0, 0, rng.range(0.6, 1.3)));
       }
-      for (let i = 0; i < 3; i++) this.ambient.ducks.push({ p, a: rng() * 6.28, r: rng.range(3, p.r * 0.9), sp: rng.range(0.15, 0.35) * (rng() < 0.5 ? -1 : 1), bob: rng() * 6 });
+      if (this.season !== 'winter') for (let i = 0; i < 3; i++) this.ambient.ducks.push({ p, a: rng() * 6.28, r: rng.range(3, p.r * 0.9), sp: rng.range(0.15, 0.35) * (rng() < 0.5 ? -1 : 1), bob: rng() * 6 });
       // reeds around the shore
-      for (let i = 0; i < 26; i++) {
-        const a = rng() * 6.28, d = p.r * rng.range(1.25, 1.5);
+      for (let i = 0; i < 30; i++) {
+        const a = rng() * 6.28, d = p.r * rng.range(1.2, 1.5);
         const x = p.x + Math.cos(a) * d, z = p.z + Math.sin(a) * d;
         const h = this.heightAt(x, z);
-        M.grass.add(m4.compose(m, x, h - 0.1, z, rng() * 6.28, 0, 0, 2.2, 3.5, 2.2), 0.55, 0.75, 0.35);
+        if (h < WATER_LEVEL - 0.4) continue;
+        const c = this.season === 'winter' ? [0.9, 0.85, 0.7] : this.season === 'autumn' ? [1.3, 1.0, 0.6] : [1, 1, 1];
+        M.reeds.add(m4.compose(m, x, h - 0.1, z, rng() * 6.28, 0, 0, rng.range(0.8, 1.3)), c[0], c[1], c[2]);
       }
     }
 
@@ -436,16 +597,19 @@ export class World {
     }
 
     // --- sky life ---
-    for (let i = 0; i < 16; i++) this.ambient.clouds.push({ x: rng.range(-H * 1.4, H * 1.4), z: rng.range(-H * 1.4, H * 1.4), y: rng.range(80, 120), s: rng.range(0.9, 2.0), sp: rng.range(1.5, 3) });
+    for (let i = 0; i < 12; i++) this.ambient.clouds.push({ x: rng.range(-H * 1.3, H * 1.3), z: rng.range(-H * 1.1, H * 1.1), y: rng.range(58, 78), s: rng.range(0.8, 1.5), sp: rng.range(1.2, 2.4), v: i % 3, yaw: rng() * 6.28 });
     for (let f = 0; f < 4; f++) {
       const cx = rng.range(-H * 0.6, H * 0.6), cz = rng.range(-H * 0.6, H * 0.6), y = rng.range(22, 34), R = rng.range(25, 50), sp = rng.range(0.12, 0.2) * (rng() < 0.5 ? -1 : 1);
       for (let i = 0; i < 5; i++) this.ambient.birds.push({ cx, cz, y: y + rng.range(-1, 1), R, sp, off: i * 0.06 + rng() * 0.02, lat: (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 1.6, flap: rng() * 6 });
     }
-    const flyCols = [[1, 0.6, 0.1], [0.4, 0.7, 1], [1, 1, 0.4], [1, 0.4, 0.7], [1, 1, 1]];
-    for (let i = 0; i < 40; i++) {
-      const x = rng.range(-H * 0.8, H * 0.8), z = rng.range(-H * 0.8, H * 0.8);
-      this.ambient.flies.push({ hx: x, hz: z, x, z, y: 1.5, t: rng() * 100, col: flyCols[Math.floor(rng() * flyCols.length)], sp: rng.range(0.6, 1.2) });
+    // butterflies hop from flower to flower
+    const flyCols = [[1, 0.6, 0.15], [0.45, 0.72, 1], [1, 0.95, 0.4], [1, 0.45, 0.75], [1, 1, 1], [0.75, 0.55, 1]];
+    if (this.flowers.length) for (let i = 0; i < 46; i++) {
+      const f = this.flowers[Math.floor(rng() * this.flowers.length)];
+      this.ambient.flies.push({ x: f.x, y: f.y, z: f.z, from: [f.x, f.y, f.z], to: f, t: 1, dur: 1, rest: rng() * 3, col: flyCols[Math.floor(rng() * flyCols.length)], ph: rng() * 6, yaw: rng() * 6.28 });
     }
+    // seasonal drifting petals / leaves / snow
+    if (S.fall) for (let i = 0; i < S.fallN * gq; i++) this.ambient.fall.push({ x: 0, y: -99, z: 0, ph: rng() * 6.28, sp: rng.range(0.6, 1.2), col: S.fall[Math.floor(rng() * S.fall.length)], spin: rng() * 6.28 });
   }
 
   // ---------- navigation grid ----------
@@ -609,60 +773,110 @@ export class World {
 
   // ---------- per-frame dynamic decoration ----------
   updateAmbient(dt, time) {
+    const rng = this.rng;
     for (const d of this.ambient.ducks) d.a += d.sp * dt * (8 / d.r);
     for (const b of this.ambient.blades) b.a += dt * 0.6;
-    for (const c of this.ambient.clouds) { c.x += c.sp * dt; if (c.x > this.half * 1.5) c.x = -this.half * 1.5; }
+    for (const c of this.ambient.clouds) { c.x += c.sp * dt; if (c.x > this.half * 1.4) c.x = -this.half * 1.4; }
     for (const f of this.ambient.flies) {
-      f.t += dt * f.sp;
-      f.x = f.hx + Math.sin(f.t * 0.7) * 6 + Math.sin(f.t * 1.9) * 2;
-      f.z = f.hz + Math.cos(f.t * 0.5) * 6 + Math.cos(f.t * 2.3) * 2;
-      f.y = this.heightAt(f.x, f.z) + 1.4 + Math.sin(f.t * 3) * 0.5;
+      if (f.rest > 0) { f.rest -= dt; continue; }
+      f.t += dt / f.dur;
+      if (f.t >= 1) {
+        // land, rest a moment, then flutter to another flower nearby
+        f.x = f.to.x; f.y = f.to.y + 0.08; f.z = f.to.z;
+        f.rest = 0.8 + rng() * 3;
+        f.from = [f.x, f.y, f.z];
+        let next = f.to;
+        for (let k = 0; k < 12; k++) {
+          const c = this.flowers[Math.floor(rng() * this.flowers.length)];
+          if (c !== f.to && Math.hypot(c.x - f.x, c.z - f.z) < 16) { next = c; break; }
+        }
+        f.to = next;
+        f.t = 0;
+        f.dur = Math.max(0.8, Math.hypot(next.x - f.x, next.z - f.z) / 2.2);
+        continue;
+      }
+      const [x0, y0, z0] = f.from, t = f.t;
+      const wob = Math.sin(t * 9 + f.ph) * 0.6;
+      const dx = f.to.x - x0, dz = f.to.z - z0, L = Math.hypot(dx, dz) || 1;
+      f.x = lerp(x0, f.to.x, t) + (-dz / L) * wob;
+      f.z = lerp(z0, f.to.z, t) + (dx / L) * wob;
+      f.y = lerp(y0, f.to.y + 0.08, t) + Math.sin(t * Math.PI) * (1.2 + L * 0.06) + Math.sin(time * 7 + f.ph) * 0.12;
+      f.yaw = Math.atan2(dx, dz);
+    }
+    // seasonal fall: drift around whatever the camera is looking at, respawning above it
+    const fc = this.focus || [0, 0, 0];
+    const wind = this.season === 'winter' ? 0.6 : 1.6;
+    for (const p of this.ambient.fall) {
+      if (p.y < this.heightAt(p.x, p.z) || Math.abs(p.x - fc[0]) > 70 || Math.abs(p.z - fc[2]) > 70) {
+        p.x = fc[0] + (rng() - 0.5) * 120; p.z = fc[2] + (rng() - 0.5) * 120;
+        p.y = this.heightAt(p.x, p.z) + 4 + rng() * 22;
+      }
+      p.ph += dt * p.sp * 2;
+      p.x += (wind + Math.sin(p.ph) * 1.2) * dt;
+      p.z += Math.cos(p.ph * 0.7) * 0.8 * dt;
+      p.y -= (this.season === 'winter' ? 1.6 : 1.1) * p.sp * dt;
+      p.spin += dt * p.sp * 3;
     }
   }
 
   drawDynamic(time, birdsEye, camH, focus, tanks = []) {
-    const M = this.M, m = this.tmpM;
-    const solid = [M.treeRound, M.treePine, M.treeBirch], ghost = [M.treeRoundG, M.treePineG, M.treeBirchG];
-    for (const t of this.trees) {
-      let hide = false;
-      if (birdsEye) {
-        // the camera sits south (+z) and above: a tree just south of a tank hides it
-        for (const k of tanks) {
-          if (!k.alive) continue;
-          const dz = t.z - k.z, dx = Math.abs(t.x - k.x);
-          if (dx < 3.6 * t.s && dz > -2.5 && dz < 5.5 * t.s) { hide = true; break; }
-        }
+    const M = this.M, m = this.tmpM, Bd = M.blob;
+    this.focus = focus;
+    // tall props between the camera (south, above) and a tank fade right down so the tank stays visible
+    const hides = (x, z, s, top) => {
+      if (!birdsEye) return false;
+      for (const k of tanks) {
+        if (!k.alive) continue;
+        const dz = z - k.z, dx = Math.abs(x - k.x);
+        if (dx < 3.4 * s && dz > -2.5 && dz < (top - k.y) * 0.95 + 1.5) return true;
       }
-      if (hide) ghost[t.kind].add(t.m, t.col[0], t.col[1], t.col[2], 0.28);
+      return false;
+    };
+    const solid = [M.treeRound, M.treePine, M.treeFruit], ghost = [M.treeRoundG, M.treePineG, M.treeFruitG];
+    for (const t of this.trees) {
+      const g = hides(t.x, t.z, t.s, t.top);
+      if (g) ghost[t.kind].add(t.m, t.col[0], t.col[1], t.col[2], 0.12);
       else solid[t.kind].add(t.m, t.col[0], t.col[1], t.col[2]);
+      this.blob(Bd, t.x, t.z, t.br, t.top - t.m[13], g ? 0.04 : 0.22);
+    }
+    for (const t of this.mushrooms) {
+      const g = hides(t.x, t.z, t.s * 1.2, t.top);
+      if (g) M.mushroomG.add(t.m, t.col[0], t.col[1], t.col[2], 0.12);
+      else M.mushroom.add(t.m, t.col[0], t.col[1], t.col[2]);
+      this.blob(Bd, t.x, t.z, t.br, 3 * t.s, g ? 0.04 : 0.22);
     }
     for (const o of this.bushes) {
       if (!o.alive) continue;
       const sq = 1 - o.squash * 0.5;
-      M.bush.add(m4.compose(m, o.x, o.y, o.z, o.yaw, 0, 0, o.s * (1 + o.squash * 0.2), o.s * sq, o.s * (1 + o.squash * 0.2)), o.col[0], o.col[1], o.col[2]);
+      M[o.berries ? 'bushBerry' : 'bush'].add(m4.compose(m, o.x, o.y, o.z, o.yaw, 0, 0, o.s * (1 + o.squash * 0.2), o.s * sq, o.s * (1 + o.squash * 0.2)), o.col[0], o.col[1], o.col[2]);
+      this.blob(Bd, o.x, o.z, 1.45 * o.s, o.s);
     }
-    for (const o of this.crates) if (o.alive) M.crate.add(m4.compose(m, o.x, o.y, o.z, o.yaw));
+    for (const o of this.crates) if (o.alive) { M.crate.add(m4.compose(m, o.x, o.y, o.z, o.yaw)); this.blob(Bd, o.x, o.z, 1.5, 1.6); }
     for (const o of this.barrels) if (o.alive) {
       const flash = o.hp < 15 ? 1 + Math.sin(time * 30) * 0.5 : 1;
       M.barrel.add(m4.compose(m, o.x, o.y, o.z, o.yaw), flash, flash, flash);
+      this.blob(Bd, o.x, o.z, 1.0, 1.6);
     }
     for (const d of this.ambient.ducks) {
       const x = d.p.x + Math.cos(d.a) * d.r, z = d.p.z + Math.sin(d.a) * d.r;
       if (this.heightAt(x, z) > WATER_LEVEL - 0.2) continue;
       const yaw = Math.atan2(-Math.sin(d.a) * Math.sign(d.sp), Math.cos(d.a) * Math.sign(d.sp));
       const y = WATER_LEVEL - 0.05 + Math.sin(time * 2 + d.bob) * 0.06;
-      const c = d.bob > 3 ? [0.98, 0.98, 0.95] : [1, 0.9, 0.3];
+      const c = d.bob > 3 ? [0.98, 0.98, 0.95] : [1, 0.88, 0.3];
       M.duck.add(m4.compose(m, x, y, z, yaw, 0, Math.sin(time * 2 + d.bob) * 0.08, 1.4), c[0], c[1], c[2]);
     }
     for (const b of this.ambient.blades) M.blades.add(m4.compose(m, b.x, b.y, b.z, b.yaw, 0, b.a));
-    if (!birdsEye) {
-      for (const c of this.ambient.clouds) M.cloud.add(m4.compose(m, c.x, c.y, c.z, 0, 0, 0, c.s * 1.6, c.s, c.s * 1.6));
+    const cl = [];
+    for (const c of this.ambient.clouds) {
+      M.clouds[c.v].add(m4.compose(m, c.x, c.y, c.z, c.yaw, 0, 0, c.s), 1, 1, 1, 0.88);
+      cl.push({ x: c.x, z: c.z, y: c.y, r: 13 * c.s });
     }
+    this.r.setClouds(cl);
     for (const b of this.ambient.birds) {
       const a = time * b.sp - b.off * Math.sign(b.sp) * 4;
       const dir = Math.sign(b.sp);
       const fx = -Math.sin(a) * dir, fz = Math.cos(a) * dir;
-      const x = b.cx + Math.cos(a) * b.R + fz * b.lat * 0, z = b.cz + Math.sin(a) * b.R;
+      const x = b.cx + Math.cos(a) * b.R, z = b.cz + Math.sin(a) * b.R;
       const lx = x + Math.cos(a) * b.lat, lz = z + Math.sin(a) * b.lat;
       const yaw = Math.atan2(fx, fz);
       const y = b.y + Math.sin(time * 0.7 + b.off * 10) * 1.5;
@@ -672,10 +886,14 @@ export class World {
       M.wing.add(m4.compose(m, lx, y, lz, yaw + Math.PI, 0, flap, 1.0));
     }
     for (const f of this.ambient.flies) {
-      const yaw = Math.atan2(Math.cos(f.t * 0.7), -Math.sin(f.t * 0.5));
-      const flap = Math.sin(time * 22 + f.t) * 1.1;
-      M.bfly.add(m4.compose(m, f.x, f.y, f.z, yaw, 0, flap, 2.2), f.col[0], f.col[1], f.col[2]);
-      M.bfly.add(m4.compose(m, f.x, f.y, f.z, yaw + Math.PI, 0, flap, 2.2), f.col[0], f.col[1], f.col[2]);
+      const flap = f.rest > 0 ? 0.25 + Math.sin(time * 3 + f.ph) * 0.35 : Math.sin(time * 24 + f.ph) * 1.1;
+      M.bfly.add(m4.compose(m, f.x, f.y, f.z, f.yaw, 0, flap, 2.2), f.col[0], f.col[1], f.col[2]);
+      M.bfly.add(m4.compose(m, f.x, f.y, f.z, f.yaw + Math.PI, 0, flap, 2.2), f.col[0], f.col[1], f.col[2]);
+    }
+    const fs = this.season === 'winter' ? 0.16 : 0.3;
+    for (const p of this.ambient.fall) {
+      if (p.y < -50) continue;
+      M.petal.add(m4.compose(m, p.x, p.y, p.z, p.spin, Math.sin(p.ph) * 0.9, Math.cos(p.spin) * 0.6, fs), p.col[0], p.col[1], p.col[2]);
     }
   }
 }
