@@ -3,10 +3,9 @@ import { TANK_ORDER } from './defs.js';
 
 /** name: [default, type, description, allowed values] */
 export const OPTIONS = {
-  mode: ['birdseye', 'enum', "Camera mode: birdseye (shared top-down) or commander (gunner's sight per player)", ['birdseye', 'commander']],
-  players: [1, 'int', 'Human players pre-joined (0-4). Others can join in the lobby'],
+  mode: ['any', 'enum', "Camera: birdseye (high overview), commander (gunner's sight), chase (behind the turret), or any (players switch with C)", ['any', 'birdseye', 'commander', 'chase']],
+  players: [0, 'int', 'Start automatically once this many players have joined (0 = wait for someone to press Start)'],
   bots: ['auto', 'intOrAuto', "Bot count, or 'auto' to fill up to 4 tanks"],
-  tanks: ['', 'list', `Tank types for P1..P4, comma separated (${TANK_ORDER.join(', ')})`],
   botTanks: ['', 'list', 'Tank types for bots, comma separated (random if empty)'],
   difficulty: ['normal', 'enum', 'Bot skill', ['easy', 'normal', 'hard']],
   mapSize: [360, 'int', 'Map edge length in metres (200-700)'],
@@ -21,18 +20,16 @@ export const OPTIONS = {
   airdrop: [35, 'int', 'Seconds between parachute supply drops (0 = off)'],
   lobby: [true, 'bool', 'Show the join lobby before the match'],
   lobbyTimeout: [0, 'int', 'Auto-start the lobby after N seconds (0 = wait)'],
-  split: [false, 'bool', "Birds-eye: give each human their own split-screen view"],
-  zoom: [38, 'int', 'Birds-eye camera height (smaller = closer)'],
-  maxZoom: [150, 'int', 'Max birds-eye height when players spread out'],
+  zoom: [120, 'int', 'Birds-eye camera height (bigger = wider view of the battlefield)'],
   stabilizer: [true, 'bool', 'Turret keeps its world aim while the hull turns'],
-  mouse: [true, 'bool', 'Player 1 can aim with the mouse'],
+  mouse: [true, 'bool', 'Allow aiming with the mouse'],
   quality: ['medium', 'enum', 'Graphics quality', ['low', 'medium', 'high']],
   season: ['summer', 'enum', 'Season: retints the island (spring blossom, summer apples, autumn leaves, winter snow)', ['spring', 'summer', 'autumn', 'winter', 'random']],
   volume: [0.7, 'float', 'Master volume 0-1'],
   music: [true, 'bool', 'Background music'],
   mute: [false, 'bool', 'Start muted'],
   fps: [false, 'bool', 'Show FPS counter'],
-  debug: [false, 'bool', 'Debug overlay + test hooks'],
+  debug: [false, 'bool', 'Testing: players spawn with every weapon fully stocked'],
 };
 
 export function parseValue(name, raw) {

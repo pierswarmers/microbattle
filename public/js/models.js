@@ -11,7 +11,6 @@ const HUB = [1, 0.8, 0.22, 0];
 const CREAM = [1, 0.96, 0.86, 0];
 const DARK = [0.2, 0.18, 0.24, 0];
 const LIGHT = [1, 0.95, 0.6, 0];
-const GLOW = [0.35, 1, 1, 0];
 const TRUNK = hexc('#855733');
 const FOLIAGE_TOP = hexc('#80D966', 1), FOLIAGE_BOT = hexc('#47A845', 1);
 const PINE = hexc('#338C59', 1);
@@ -21,14 +20,7 @@ const SNOW = [0.97, 0.98, 1, 0];
 function hexc(h, mask = 0) { return [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255, mask]; }
 const mixc = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3]];
 
-/** Turret / barrel mount points per tank type (in tank-local units before type scale). */
-export const TANK_GEOM = {
-  hornet: { turretY: 1.2, barrelY: 0.28, barrelZ: 0.45, barrelLen: 1.9, sightY: 0.75 },
-  trooper: { turretY: 1.45, barrelY: 0.32, barrelZ: 0.8, barrelLen: 2.7, sightY: 0.95 },
-  bulldog: { turretY: 1.7, barrelY: 0.4, barrelZ: 1.0, barrelLen: 3.1, sightY: 1.1 },
-  thumper: { turretY: 1.4, barrelY: 0.45, barrelZ: 0.1, barrelLen: 2.0, sightY: 1.2 },
-  longshot: { turretY: 1.25, barrelY: 0.25, barrelZ: 0.6, barrelLen: 4.4, sightY: 0.8 },
-};
+export { TANK_GEOM } from './defs.js';
 
 /** Chunky toy treads: a rounded rubber band per side with big wheels and bright hubs. */
 function tracks(g, w, len, h, y = 0) {
@@ -62,7 +54,7 @@ function gun(g, x, len, r, col = PAINT2, tip = DARK) {
 
 function buildTank(type) {
   const hull = new Geo(), turret = new Geo(), barrel = new Geo();
-  if (type === 'hornet') {
+  if (type === 'scout') {
     tracks(hull, 2.0, 3.0, 0.8);
     hull.rbox(0, 0.98, 0.05, 1.75, 0.6, 3.05, 0.28, PAINT);
     hull.rbox(0, 1.22, -1.05, 1.2, 0.2, 0.55, 0.1, PAINT2);
@@ -73,7 +65,7 @@ function buildTank(type) {
     antenna(turret, -0.42, 0.3, -0.35, 1.0);
     for (const sx of [-0.15, 0.15]) gun(barrel, sx, 1.9, 0.085);
     barrel.rbox(0, 0, 0.18, 0.5, 0.28, 0.42, 0.1, PAINT3);
-  } else if (type === 'trooper') {
+  } else if (type === 'standard') {
     tracks(hull, 2.4, 3.7, 0.9);
     hull.rbox(0, 1.12, 0, 2.15, 0.7, 3.6, 0.32, PAINT);
     for (const sx of [-1, 1]) hull.rbox(sx * 1.2, 1.0, 0, 0.5, 0.16, 3.5, 0.08, PAINT2);
@@ -85,7 +77,7 @@ function buildTank(type) {
     antenna(turret, -0.55, 0.6, -0.65, 1.2);
     gun(barrel, 0, 2.7, 0.16);
     barrel.cyl(0, 0, 0, 0.3, 0.27, 0.45, 10, PAINT3, 'z');
-  } else if (type === 'bulldog') {
+  } else if (type === 'superheavy') {
     tracks(hull, 2.9, 4.2, 1.05);
     hull.rbox(0, 1.32, 0, 2.6, 0.85, 4.1, 0.38, PAINT);
     for (const sx of [-1, 1]) hull.rbox(sx * 1.45, 1.05, 0, 0.3, 0.5, 3.8, 0.14, PAINT2);
@@ -100,7 +92,7 @@ function buildTank(type) {
     gun(barrel, 0, 3.1, 0.24);
     barrel.rbox(0, 0, 2.95, 0.66, 0.4, 0.5, 0.15, PAINT3);
     barrel.cyl(0, 0, 0, 0.44, 0.38, 0.65, 10, PAINT3, 'z');
-  } else if (type === 'thumper') {
+  } else if (type === 'artillery') {
     tracks(hull, 2.6, 3.9, 0.9);
     hull.rbox(0, 1.1, 0, 2.35, 0.68, 3.85, 0.32, PAINT);
     hull.rbox(0, 1.48, 1.3, 1.5, 0.22, 0.8, 0.1, PAINT2);
@@ -114,18 +106,6 @@ function buildTank(type) {
     barrel.cyl(0, 0, 1.6, 0.54, 0.54, 0.4, 14, PAINT3, 'z');
     barrel.cyl(0, 0, 1.98, 0.3, 0.3, 0.04, 12, DARK, 'z');
     barrel.cyl(0, 0, -0.6, 0.52, 0.52, 0.5, 14, PAINT3, 'z');
-  } else if (type === 'longshot') {
-    tracks(hull, 2.2, 3.8, 0.8);
-    hull.rbox(0, 0.98, 0, 1.95, 0.55, 3.85, 0.26, PAINT);
-    hull.rbox(0, 1.15, -1.35, 1.5, 0.28, 0.7, 0.12, PAINT2);
-    headlights(hull, 0.62, 1.0, 1.9);
-    turret.rbox(0, 0.22, -0.2, 1.3, 0.48, 1.7, 0.22, PAINT);
-    turret.rbox(0.5, 0.52, -0.3, 0.32, 0.26, 0.9, 0.12, PAINT2);
-    turret.sphere(0.5, 0.52, 0.17, 0.13, 1, GLOW);
-    antenna(turret, -0.45, 0.45, -0.8, 1.15);
-    gun(barrel, 0, 4.4, 0.12);
-    for (let i = 0; i < 4; i++) barrel.cyl(0, 0, 0.9 + i * 0.75, 0.19, 0.19, 0.16, 10, GLOW, 'z');
-    barrel.cyl(0, 0, 0, 0.26, 0.23, 0.45, 10, PAINT3, 'z');
   }
   for (const g of [hull, turret, barrel]) g.smooth(55);
   return { hull, turret, barrel };
@@ -470,11 +450,43 @@ function mineMesh() {
   return g;
 }
 
+function bombMesh() {
+  const g = new Geo();
+  g.cyl(0, 0, -0.9, 0.35, 0.35, 1.4, 8, [0.3, 0.38, 0.25, 0], 'z');
+  g.cyl(0, 0, 0.5, 0.35, 0.05, 0.6, 8, [0.3, 0.38, 0.25, 0], 'z');
+  g.cyl(0, 0, -0.3, 0.37, 0.37, 0.15, 8, [1, 0.85, 0.1, 0], 'z');
+  for (let i = 0; i < 4; i++) { g.setT(T(0, 0, 0, 0, 0, (i * Math.PI) / 2)); g.box(0, 0.3, -0.9, 0.04, 0.4, 0.4, [0.25, 0.3, 0.2, 0]); g.setT(null); }
+  return g;
+}
+
+function nukeMesh() {
+  const g = new Geo();
+  g.sphere(0, 0, 0, 0.7, 1, (y) => [1, 0.85, 0.1, 0], 0, Math.random, 1);
+  g.cyl(0, 0, -0.2, 0.72, 0.72, 0.25, 10, [0.12, 0.12, 0.12, 0], 'z');
+  g.cyl(0, 0, -1.2, 0.3, 0.55, 0.6, 8, [0.12, 0.12, 0.12, 0], 'z');
+  for (let i = 0; i < 4; i++) { g.setT(T(0, 0, 0, 0, 0, (i * Math.PI) / 2)); g.box(0, 0.45, -1.1, 0.05, 0.5, 0.5, [1, 0.85, 0.1, 0]); g.setT(null); }
+  return g;
+}
+
+function jetMesh() {
+  const g = new Geo();
+  const body = [0.55, 0.6, 0.68, 0], dark = [0.3, 0.33, 0.38, 0], glass = [0.4, 0.75, 1, 0];
+  g.cyl(0, 0, -3, 0.6, 0.45, 5.5, 8, body, 'z');
+  g.cyl(0, 0, 2.5, 0.45, 0.05, 1.6, 8, body, 'z');
+  g.sphere(0, 0.45, 1.6, 0.45, 1, glass, 0, Math.random, 0.8);
+  g.box(0, -0.05, -0.3, 7, 0.12, 1.8, body, 0.1);
+  g.box(0, 0.9, -2.7, 0.12, 1.6, 1.0, dark);
+  g.box(0, 0.1, -2.8, 2.6, 0.1, 0.8, body);
+  for (const x of [-1.6, 1.6]) g.cyl(x, -0.35, -0.5, 0.18, 0.18, 0.9, 6, dark, 'z');
+  g.box(0, -0.35, 0.2, 0.15, 0.3, 0.6, [1, 0.25, 0.2, 0]);
+  return g;
+}
+
 /** Create every mesh. Returns a dictionary of Mesh instances. */
 export function createModels(r, rng, season = 'summer') {
   const M = {};
   M.tanks = {};
-  for (const type of Object.keys(TANK_GEOM)) {
+  for (const type of ['scout', 'standard', 'artillery', 'superheavy']) {
     const t = buildTank(type);
     M.tanks[type] = {
       hull: new Mesh(r, t.hull, { capacity: 8, outlineMax: 0.12 }),
@@ -524,6 +536,9 @@ export function createModels(r, rng, season = 'summer') {
   M.chute = new Mesh(r, parachute(), { capacity: 8, cull: false });
   M.rocket = new Mesh(r, rocketMesh().smooth(50), { capacity: 64, outlineMax: 0.05 });
   M.mine = new Mesh(r, mineMesh().smooth(50), { capacity: 64 });
+  M.bomb = new Mesh(r, bombMesh().smooth(50), { capacity: 64 });
+  M.nukeShell = new Mesh(r, nukeMesh().smooth(60), { capacity: 8 });
+  M.jet = new Mesh(r, jetMesh().smooth(50), { capacity: 8 });
   // soft contact shadows under everything (no shadow maps)
   const blob = new Geo().blob();
   M.blobStatic = new Mesh(r, blob, { static: true, capacity: 2048, transparent: true, mode: 5, layer: 1 });
@@ -537,7 +552,7 @@ export function createModels(r, rng, season = 'summer') {
   M.shell = new Mesh(r, new Geo().sphere(0, 0, 0, 1, 1, [0.25, 0.25, 0.3, 1], 0, rng, 1).smooth(80), { capacity: 64, outlineMax: 0.06 });
   M.chunk = new Mesh(r, unitBox, { capacity: 512, outlineMax: 0.05 });
   M.ball = new Mesh(r, new Geo().sphere(0, 0, 0, 1, 1, [1, 1, 1, 1]).smooth(80), { capacity: 256, outlineMax: 0.06 });
-  M.puff = new Mesh(r, softSphere, { capacity: 1024, transparent: true, layer: 5 });
+  M.puff = new Mesh(r, softSphere, { capacity: 1536, transparent: true, layer: 4, mode: 4 });
   M.fire = new Mesh(r, softSphere, { capacity: 1024, transparent: true, mode: 3, layer: 5 });
   M.glow = new Mesh(r, lowSphere, { capacity: 1024, transparent: true, additive: true, mode: 1, layer: 6 });
   M.spark = new Mesh(r, zBox, { capacity: 1024, transparent: true, additive: true, mode: 1, layer: 6 });
@@ -545,6 +560,7 @@ export function createModels(r, rng, season = 'summer') {
   M.shock = new Mesh(r, new Geo().ring(0, 0, 0, 0.8, 1, 24, [1, 1, 1, 1]), { capacity: 64, transparent: true, additive: true, mode: 1, cull: false, layer: 6 });
   M.decal = new Mesh(r, blob, { capacity: 256, transparent: true, layer: 1, mode: 5 });
   M.track = new Mesh(r, new Geo().box(0, 0, 0, 1, 0.01, 1, [1, 1, 1, 1]), { capacity: 2048, transparent: true, layer: 1, mode: 1 });
+  M.thinRing = new Mesh(r, new Geo().ring(0, 0, 0, 0.965, 1, 64, [1, 1, 1, 1]), { capacity: 32, transparent: true, layer: 2, mode: 1, cull: false });
   M.teamRing = new Mesh(r, new Geo().ring(0, 0, 0, 0.82, 1, 28, [1, 1, 1, 1]), { capacity: 16, transparent: true, layer: 2, mode: 1, cull: false });
   M.bubble = new Mesh(r, unitSphere, { capacity: 8, transparent: true, additive: true, mode: 1, layer: 8, cull: false });
   // light beacon over pickups: bright at the base, fading to nothing at the top (additive)

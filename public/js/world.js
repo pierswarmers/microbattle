@@ -18,13 +18,16 @@ const SEASONS = {
 };
 
 export class World {
+  /** renderer may be null (headless server): no meshes or cosmetic decoration are built. */
   constructor(renderer, models, cfg) {
     this.r = renderer;
+    this.headless = !renderer;
     this.M = models;
     this.cfg = cfg;
     this.size = cfg.mapSize;
     this.half = this.size / 2;
     this.rng = makeRng(cfg.seed * 7919 + 13);
+    this.rngC = makeRng(cfg.seed * 104729 + 7); // cosmetic-only randomness
     this.noise = makeNoise(cfg.seed);
     this.obstacles = [];
     this.cellSize = 8;
@@ -40,9 +43,7 @@ export class World {
     this.tmpM = m4.create();
     this.layout();
     this.buildHeights();
-    this.buildTerrainMesh();
-    this.buildCliffs();
-    this.buildWater();
+    if (!this.headless) { this.buildTerrainMesh(); this.buildCliffs(); this.buildWater(); }
     this.decorate();
     this.buildNav();
     this.pickupSpots = this.pickupSpots.filter((p) => this.reachable(p.x, p.z));
@@ -222,7 +223,7 @@ export class World {
       const g = this.growthAt(cx, cz, hc, pd, this.slopeAt(i, j));
       this.growth[j * (N - 1) + i] = g;
       const base = this.groundColor(cx, cz, hc, g);
-      const k = ((i + j) & 1 ? 1.03 : 0.97) * (0.985 + this.rng() * 0.03);
+      const k = ((i + j) & 1 ? 1.03 : 0.97) * (0.985 + this.rngC() * 0.03);
       const c = [base[0] * k, base[1] * k, base[2] * k];
       // one normal per tile so the cel bands never split a tile along its diagonal
       let nx = (h00 + h01 - h10 - h11) / (2 * C), nz = (h00 + h10 - h01 - h11) / (2 * C);
@@ -302,6 +303,7 @@ export class World {
 
   /** Soft contact shadow, nudged away from the sun by the object's height. */
   blob(mesh, x, z, r, h = 1, a = 0.22) {
+    if (this.headless) return;
     const off = Math.min(h * 0.1, r * 0.45);
     x -= 0.815 * off; z -= 0.58 * off;
     const n = this.normalAt(x, z, this._bn || (this._bn = [0, 1, 0]));
@@ -312,6 +314,7 @@ export class World {
   // ---------- obstacles ----------
   addObstacle(o) {
     o.alive = true;
+    o.index = this.obstacles.length; // stable id shared by server and clients
     this.obstacles.push(o);
     this.gridInsert(o);
     return o;
@@ -373,7 +376,9 @@ export class World {
 
   // ---------- decoration ----------
   decorate() {
-    const rng = this.rng, M = this.M, H = this.half, m = this.tmpM, S = this.S;
+    // obstacles use `rng` so the server (headless) and every client build the same ones;
+    // anything purely cosmetic uses `rngC` so graphics settings and seasons never shift them
+    const rng = this.rng, rngC = this.rngC, M = this.M, H = this.half, m = this.tmpM, S = this.S;
     const dens = this.cfg.trees;
     const B = M.blobStatic;
     const place = (n, r, opts, fn) => {
@@ -387,8 +392,8 @@ export class World {
       }
     };
     const foliage = () => {
-      const f = S.foliage[Math.floor(rng() * S.foliage.length)];
-      const j = 0.94 + rng() * 0.1;
+      const f = S.foliage[Math.floor(rngC() * S.foliage.length)];
+      const j = 0.94 + rngC() * 0.1;
       return [f[0] * j, f[1] * j, f[2] * j];
     };
 
@@ -431,7 +436,7 @@ export class World {
         const x = side === 0 ? t : side === 1 ? t : side === 2 ? E : -E;
         const z = side === 0 ? E : side === 1 ? -E : t;
         const h = this.heightAt(x, z);
-        M.post.add(m4.compose(m, x, h - 0.1, z, rng() * 0.3, (rng() - 0.5) * 0.12, (rng() - 0.5) * 0.12, rng.range(0.9, 1.15)));
+        M.post.add(m4.compose(m, x, h - 0.1, z, rngC() * 0.3, (rngC() - 0.5) * 0.12, (rngC() - 0.5) * 0.12, rngC.range(0.9, 1.15)));
         this.blob(B, x, z, 0.45, 1.2);
       }
     }
@@ -443,12 +448,12 @@ export class World {
       M.rock.add(m4.compose(m, x, h - 0.2, z, rng() * 6.28, rng() * 0.2, 0, s, s * rng.range(0.7, 1.2), s), g, g, g);
       this.blob(B, x, z, s * 1.25, s);
       this.addObstacle({ x, z, r: s * 0.95, top: h + s * 0.9, kind: 'rock' });
-      const n = rng.int(1, 3);
+      const n = rngC.int(1, 3);
       for (let i = 0; i < n; i++) {
-        const a = rng() * 6.28, d = s * rng.range(1.0, 1.4), ss = s * rng.range(0.25, 0.45);
+        const a = rngC() * 6.28, d = s * rngC.range(1.0, 1.4), ss = s * rngC.range(0.25, 0.45);
         const px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d, ph = this.heightAt(px, pz);
         if (ph < WATER_LEVEL + 0.5) continue;
-        M.rock.add(m4.compose(m, px, ph - 0.1, pz, rng() * 6.28, 0, 0, ss), g, g, g);
+        M.rock.add(m4.compose(m, px, ph - 0.1, pz, rngC() * 6.28, 0, 0, ss), g, g, g);
         this.blob(B, px, pz, ss * 1.3, ss);
       }
     });
@@ -456,11 +461,12 @@ export class World {
     // --- trees: dense forests + scattered singles ---
     this.trees = [];
     const addTree = (x, z, h, kind, s, solid) => {
+      const yaw = (solid ? rng : rngC)() * 6.28;
       const col = kind === 1 ? (this.season === 'winter' ? [0.9, 0.95, 0.95] : [1, 1, 1]) : foliage();
       const top = h + (kind === 1 ? 5.7 : 6.5) * s;
       // contact shadows for trees and giant mushrooms are drawn per frame so they fade with a ghosted prop
-      this.trees.push({ kind, x, z, s, top, col, br: (kind === 1 ? 2.2 : 2.6) * s, m: m4.compose(m4.create(), x, h - 0.1, z, rng() * 6.28, 0, 0, s) });
-      if (solid) this.addObstacle({ x, z, r: 0.7 * s, top, kind: 'tree' });
+      this.trees.push({ kind, x, z, s, top, col, br: (kind === 1 ? 2.2 : 2.6) * s, m: m4.compose(m4.create(), x, h - 0.1, z, yaw, 0, 0, s) });
+      if (solid) this.addObstacle({ x, z, r: 0.7 * s, top, kind: 'tree', cr: 2.4 * s, cb: h + 2.4 * s });
     };
     place(Math.round(340 * dens), 1.4, {
       gap: 2.2,
@@ -471,11 +477,11 @@ export class World {
     });
     // a ring of trees on the unreachable rim (no collision needed)
     for (let i = 0; i < 140 * dens; i++) {
-      const side = Math.floor(rng() * 4), t = rng.range(-H * 0.95, H * 0.95), d = rng.range(H * 0.88, H * 0.96);
+      const side = Math.floor(rngC() * 4), t = rngC.range(-H * 0.95, H * 0.95), d = rngC.range(H * 0.88, H * 0.96);
       const x = side === 0 ? t : side === 1 ? t : side === 2 ? d : -d;
       const z = side === 0 ? d : side === 1 ? -d : t;
       if (this.heightAt(x, z) < WATER_LEVEL + 0.7) continue;
-      addTree(x, z, this.heightAt(x, z), rng() < 0.5 ? 1 : rng() < 0.7 ? 0 : 2, rng.range(1.0, 1.6), false);
+      addTree(x, z, this.heightAt(x, z), rngC() < 0.5 ? 1 : rngC() < 0.7 ? 0 : 2, rngC.range(1.0, 1.6), false);
     }
 
     // --- giant mushrooms (whimsy!) ---
@@ -484,7 +490,7 @@ export class World {
       const s = rng.range(0.8, 1.6);
       const c = rng() < 0.8 ? [0.95, 0.16, 0.14] : [0.65, 0.35, 1];
       this.mushrooms.push({ x, z, s, top: h + 3.5 * s, col: c, br: 2.1 * s, m: m4.compose(m4.create(), x, h - 0.1, z, rng() * 6.28, (rng() - 0.5) * 0.15, (rng() - 0.5) * 0.15, s) });
-      this.addObstacle({ x, z, r: 0.7 * s, top: h + 3.5 * s, kind: 'mushroom' });
+      this.addObstacle({ x, z, r: 0.7 * s, top: h + 3.5 * s, kind: 'mushroom', cr: 2 * s, cb: h + 2 * s });
     });
 
     // --- fallen logs in and around the woods ---
@@ -502,7 +508,7 @@ export class World {
       const s = rng.range(0.9, 1.6);
       const g = rng.range(0.9, 1.08);
       const base = this.season === 'autumn' ? [0.62, 0.62, 0.26] : this.season === 'winter' ? [0.4, 0.58, 0.42] : [0.42, 0.78, 0.32];
-      this.addObstacle({ x, z, r: 0.9 * s, top: h + 1.3 * s, kind: 'bush', soft: true, hp: 1, s, yaw: rng() * 6.28, col: [base[0] * g, base[1] * g, base[2] * g], y: h - 0.1, squash: 0, berries: rng() < 0.35 });
+      this.addObstacle({ x, z, r: 0.9 * s, top: h + 1.3 * s, kind: 'bush', soft: true, hp: 1, s, yaw: rng() * 6.28, col: [base[0] * g, base[1] * g, base[2] * g], y: h - 0.1, squash: 0, berries: rngC() < 0.35 });
       this.bushes.push(this.obstacles[this.obstacles.length - 1]);
     });
     this.crates = [];
@@ -524,68 +530,6 @@ export class World {
       }
     });
 
-    // --- small non-colliding details: flowers, toadstools, grass tufts, lily pads, reeds ---
-    const petal = [[1, 0.45, 0.65], [1, 0.86, 0.25], [0.74, 0.58, 1], [1, 1, 1], [1, 0.6, 0.22], [0.45, 0.75, 1]];
-    const gq = this.cfg.quality === 'low' ? 0.4 : this.cfg.quality === 'high' ? 1.4 : 1;
-    this.flowers = [];
-    let nf = 0, tries = 0;
-    const flowerN = this.season === 'winter' ? 0 : this.season === 'autumn' ? 500 : this.season === 'spring' ? 1800 : 1400;
-    while (nf < flowerN * gq && tries++ < 20000) {
-      // flowers come in little clumps
-      const cx = rng.range(-H * 0.85, H * 0.85), cz = rng.range(-H * 0.85, H * 0.85);
-      const meadow = this.noise.fbm(cx * 0.02 + 70, cz * 0.02 - 20, 3);
-      if (meadow < 0.5 && rng() > 0.25) continue;
-      const col = petal[Math.floor(rng() * petal.length)];
-      for (let k = 0; k < 8; k++) {
-        const x = cx + rng.range(-3, 3), z = cz + rng.range(-3, 3);
-        const h = this.heightAt(x, z);
-        if (h < WATER_LEVEL + 0.8 || this.pathDist(x, z) < 3) continue;
-        const s = rng.range(0.9, 1.6);
-        M.flower.add(m4.compose(m, x, h - 0.05, z, rng() * 6.28, 0, 0, s), col[0], col[1], col[2]);
-        if (k === 0) this.flowers.push({ x, z, y: h + 0.75 * s });
-        nf++;
-      }
-    }
-    for (let i = 0; i < 160 * dens * gq; i++) {
-      const x = rng.range(-H * 0.85, H * 0.85), z = rng.range(-H * 0.85, H * 0.85);
-      if (this.forestDensity(x, z) < 0.5 && rng() > 0.2) continue;
-      const h = this.heightAt(x, z);
-      if (h < WATER_LEVEL + 0.8 || this.pathDist(x, z) < 3) continue;
-      const s = rng.range(0.8, 1.6);
-      M.toadstool.add(m4.compose(m, x, h - 0.05, z, rng() * 6.28, (rng() - 0.5) * 0.3, (rng() - 0.5) * 0.3, s));
-    }
-    const tuftCol = this.season === 'winter' ? [0.86, 0.93, 0.96] : null;
-    for (let i = 0; i < 9000 * gq; i++) {
-      const x = rng.range(-H * 0.95, H * 0.95), z = rng.range(-H * 0.95, H * 0.95);
-      const h = this.heightAt(x, z);
-      if (h < WATER_LEVEL + 0.5) continue;
-      // tufts grow taller and denser with the ground's growth
-      const g = this.tileGrowth(x, z);
-      if (g < 0.35 || rng() > g * g) continue;
-      const s = rng.range(0.75, 1.15) * (0.55 + g * 0.75);
-      const c = tuftCol || this.groundColor(x, z, h, Math.min(1, g + 0.1));
-      const j = 1.05 + rng() * 0.12;
-      M.grass.add(m4.compose(m, x, h - 0.05, z, rng() * 6.28, 0, 0, s, s * rng.range(0.85, 1.35), s), c[0] * j, c[1] * j, c[2] * j);
-    }
-    for (const p of this.ponds) {
-      for (let i = 0; i < 12; i++) {
-        const a = rng() * 6.28, d = rng.range(2, p.r * 1.25);
-        const x = p.x + Math.cos(a) * d, z = p.z + Math.sin(a) * d;
-        if (this.heightAt(x, z) > WATER_LEVEL - 0.3 || this.season === 'winter') continue;
-        M.lily.add(m4.compose(m, x, WATER_LEVEL + 0.04, z, rng() * 6.28, 0, 0, rng.range(0.6, 1.3)));
-      }
-      if (this.season !== 'winter') for (let i = 0; i < 3; i++) this.ambient.ducks.push({ p, a: rng() * 6.28, r: rng.range(3, p.r * 0.9), sp: rng.range(0.15, 0.35) * (rng() < 0.5 ? -1 : 1), bob: rng() * 6 });
-      // reeds around the shore
-      for (let i = 0; i < 30; i++) {
-        const a = rng() * 6.28, d = p.r * rng.range(1.2, 1.5);
-        const x = p.x + Math.cos(a) * d, z = p.z + Math.sin(a) * d;
-        const h = this.heightAt(x, z);
-        if (h < WATER_LEVEL - 0.4) continue;
-        const c = this.season === 'winter' ? [0.9, 0.85, 0.7] : this.season === 'autumn' ? [1.3, 1.0, 0.6] : [1, 1, 1];
-        M.reeds.add(m4.compose(m, x, h - 0.1, z, rng() * 6.28, 0, 0, rng.range(0.8, 1.3)), c[0], c[1], c[2]);
-      }
-    }
-
     // --- pickup spots ---
     let ptries = 0;
     const want = Math.round(clamp(this.size / 18, 12, 30));
@@ -596,20 +540,84 @@ export class World {
       this.pickupSpots.push({ x, z });
     }
 
+    // everything below is purely cosmetic: the server (headless) skips it
+    if (this.headless) return;
+    // --- small non-colliding details: flowers, toadstools, grass tufts, lily pads, reeds ---
+    const petal = [[1, 0.45, 0.65], [1, 0.86, 0.25], [0.74, 0.58, 1], [1, 1, 1], [1, 0.6, 0.22], [0.45, 0.75, 1]];
+    const gq = this.cfg.quality === 'low' ? 0.4 : this.cfg.quality === 'high' ? 1.4 : 1;
+    this.flowers = [];
+    let nf = 0, tries = 0;
+    const flowerN = this.season === 'winter' ? 0 : this.season === 'autumn' ? 500 : this.season === 'spring' ? 1800 : 1400;
+    while (nf < flowerN * gq && tries++ < 20000) {
+      // flowers come in little clumps
+      const cx = rngC.range(-H * 0.85, H * 0.85), cz = rngC.range(-H * 0.85, H * 0.85);
+      const meadow = this.noise.fbm(cx * 0.02 + 70, cz * 0.02 - 20, 3);
+      if (meadow < 0.5 && rngC() > 0.25) continue;
+      const col = petal[Math.floor(rngC() * petal.length)];
+      for (let k = 0; k < 8; k++) {
+        const x = cx + rngC.range(-3, 3), z = cz + rngC.range(-3, 3);
+        const h = this.heightAt(x, z);
+        if (h < WATER_LEVEL + 0.8 || this.pathDist(x, z) < 3) continue;
+        const s = rngC.range(0.9, 1.6);
+        M.flower.add(m4.compose(m, x, h - 0.05, z, rngC() * 6.28, 0, 0, s), col[0], col[1], col[2]);
+        if (k === 0) this.flowers.push({ x, z, y: h + 0.75 * s });
+        nf++;
+      }
+    }
+    for (let i = 0; i < 160 * dens * gq; i++) {
+      const x = rngC.range(-H * 0.85, H * 0.85), z = rngC.range(-H * 0.85, H * 0.85);
+      if (this.forestDensity(x, z) < 0.5 && rngC() > 0.2) continue;
+      const h = this.heightAt(x, z);
+      if (h < WATER_LEVEL + 0.8 || this.pathDist(x, z) < 3) continue;
+      const s = rngC.range(0.8, 1.6);
+      M.toadstool.add(m4.compose(m, x, h - 0.05, z, rngC() * 6.28, (rngC() - 0.5) * 0.3, (rngC() - 0.5) * 0.3, s));
+    }
+    const tuftCol = this.season === 'winter' ? [0.86, 0.93, 0.96] : null;
+    for (let i = 0; i < 9000 * gq; i++) {
+      const x = rngC.range(-H * 0.95, H * 0.95), z = rngC.range(-H * 0.95, H * 0.95);
+      const h = this.heightAt(x, z);
+      if (h < WATER_LEVEL + 0.5) continue;
+      // tufts grow taller and denser with the ground's growth
+      const g = this.tileGrowth(x, z);
+      if (g < 0.35 || rngC() > g * g) continue;
+      const s = rngC.range(0.75, 1.15) * (0.55 + g * 0.75);
+      const c = tuftCol || this.groundColor(x, z, h, Math.min(1, g + 0.1));
+      const j = 1.05 + rngC() * 0.12;
+      M.grass.add(m4.compose(m, x, h - 0.05, z, rngC() * 6.28, 0, 0, s, s * rngC.range(0.85, 1.35), s), c[0] * j, c[1] * j, c[2] * j);
+    }
+    for (const p of this.ponds) {
+      for (let i = 0; i < 12; i++) {
+        const a = rngC() * 6.28, d = rngC.range(2, p.r * 1.25);
+        const x = p.x + Math.cos(a) * d, z = p.z + Math.sin(a) * d;
+        if (this.heightAt(x, z) > WATER_LEVEL - 0.3 || this.season === 'winter') continue;
+        M.lily.add(m4.compose(m, x, WATER_LEVEL + 0.04, z, rngC() * 6.28, 0, 0, rngC.range(0.6, 1.3)));
+      }
+      if (this.season !== 'winter') for (let i = 0; i < 3; i++) this.ambient.ducks.push({ p, a: rngC() * 6.28, r: rngC.range(3, p.r * 0.9), sp: rngC.range(0.15, 0.35) * (rngC() < 0.5 ? -1 : 1), bob: rngC() * 6 });
+      // reeds around the shore
+      for (let i = 0; i < 30; i++) {
+        const a = rngC() * 6.28, d = p.r * rngC.range(1.2, 1.5);
+        const x = p.x + Math.cos(a) * d, z = p.z + Math.sin(a) * d;
+        const h = this.heightAt(x, z);
+        if (h < WATER_LEVEL - 0.4) continue;
+        const c = this.season === 'winter' ? [0.9, 0.85, 0.7] : this.season === 'autumn' ? [1.3, 1.0, 0.6] : [1, 1, 1];
+        M.reeds.add(m4.compose(m, x, h - 0.1, z, rngC() * 6.28, 0, 0, rngC.range(0.8, 1.3)), c[0], c[1], c[2]);
+      }
+    }
+
     // --- sky life ---
-    for (let i = 0; i < 12; i++) this.ambient.clouds.push({ x: rng.range(-H * 1.3, H * 1.3), z: rng.range(-H * 1.1, H * 1.1), y: rng.range(58, 78), s: rng.range(0.8, 1.5), sp: rng.range(1.2, 2.4), v: i % 3, yaw: rng() * 6.28 });
+    for (let i = 0; i < 12; i++) this.ambient.clouds.push({ x: rngC.range(-H * 1.3, H * 1.3), z: rngC.range(-H * 1.1, H * 1.1), y: rngC.range(58, 78), s: rngC.range(0.8, 1.5), sp: rngC.range(1.2, 2.4), v: i % 3, yaw: rngC() * 6.28 });
     for (let f = 0; f < 4; f++) {
-      const cx = rng.range(-H * 0.6, H * 0.6), cz = rng.range(-H * 0.6, H * 0.6), y = rng.range(22, 34), R = rng.range(25, 50), sp = rng.range(0.12, 0.2) * (rng() < 0.5 ? -1 : 1);
-      for (let i = 0; i < 5; i++) this.ambient.birds.push({ cx, cz, y: y + rng.range(-1, 1), R, sp, off: i * 0.06 + rng() * 0.02, lat: (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 1.6, flap: rng() * 6 });
+      const cx = rngC.range(-H * 0.6, H * 0.6), cz = rngC.range(-H * 0.6, H * 0.6), y = rngC.range(22, 34), R = rngC.range(25, 50), sp = rngC.range(0.12, 0.2) * (rngC() < 0.5 ? -1 : 1);
+      for (let i = 0; i < 5; i++) this.ambient.birds.push({ cx, cz, y: y + rngC.range(-1, 1), R, sp, off: i * 0.06 + rngC() * 0.02, lat: (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 1.6, flap: rngC() * 6 });
     }
     // butterflies hop from flower to flower
     const flyCols = [[1, 0.6, 0.15], [0.45, 0.72, 1], [1, 0.95, 0.4], [1, 0.45, 0.75], [1, 1, 1], [0.75, 0.55, 1]];
     if (this.flowers.length) for (let i = 0; i < 46; i++) {
-      const f = this.flowers[Math.floor(rng() * this.flowers.length)];
-      this.ambient.flies.push({ x: f.x, y: f.y, z: f.z, from: [f.x, f.y, f.z], to: f, t: 1, dur: 1, rest: rng() * 3, col: flyCols[Math.floor(rng() * flyCols.length)], ph: rng() * 6, yaw: rng() * 6.28 });
+      const f = this.flowers[Math.floor(rngC() * this.flowers.length)];
+      this.ambient.flies.push({ x: f.x, y: f.y, z: f.z, from: [f.x, f.y, f.z], to: f, t: 1, dur: 1, rest: rngC() * 3, col: flyCols[Math.floor(rngC() * flyCols.length)], ph: rngC() * 6, yaw: rngC() * 6.28 });
     }
     // seasonal drifting petals / leaves / snow
-    if (S.fall) for (let i = 0; i < S.fallN * gq; i++) this.ambient.fall.push({ x: 0, y: -99, z: 0, ph: rng() * 6.28, sp: rng.range(0.6, 1.2), col: S.fall[Math.floor(rng() * S.fall.length)], spin: rng() * 6.28 });
+    if (S.fall) for (let i = 0; i < S.fallN * gq; i++) this.ambient.fall.push({ x: 0, y: -99, z: 0, ph: rngC() * 6.28, sp: rngC.range(0.6, 1.2), col: S.fall[Math.floor(rngC() * S.fall.length)], spin: rngC() * 6.28 });
   }
 
   // ---------- navigation grid ----------
@@ -773,7 +781,7 @@ export class World {
 
   // ---------- per-frame dynamic decoration ----------
   updateAmbient(dt, time) {
-    const rng = this.rng;
+    const rng = this.rngC;
     for (const d of this.ambient.ducks) d.a += d.sp * dt * (8 / d.r);
     for (const b of this.ambient.blades) b.a += dt * 0.6;
     for (const c of this.ambient.clouds) { c.x += c.sp * dt; if (c.x > this.half * 1.4) c.x = -this.half * 1.4; }

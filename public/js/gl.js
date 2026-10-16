@@ -114,8 +114,10 @@ void main() {
     outCol = vec4(mix(ink, uFogCol, fog), 1.0);
     return;
   }
-  if (uMode == 1) { // unlit / emissive
-    outCol = vCol;
+  if (uMode == 1) { // unlit / emissive; translucent ones fade out right in front of the camera
+    float a1 = vCol.a;
+    if (a1 < 0.999) a1 *= smoothstep(3.0, 18.0, d);
+    outCol = vec4(vCol.rgb, a1);
     return;
   }
   if (uMode == 5) { // soft blob (contact shadow / scorch): instance colour, vertex red channel is the falloff
@@ -126,9 +128,18 @@ void main() {
   if (!gl_FrontFacing && uMode != 7) n = -n; // mode 7: two-sided cards lit like the ground
   vec3 v = normalize(uCamPos - vWorld);
   float ndl = dot(n, uSunDir);
-  if (uMode == 3) { // toon fire: self-lit but still banded so fireballs read as round puffs
-    float rim = pow(1.0 - max(dot(n, v), 0.0), 2.0);
-    outCol = vec4(vCol.rgb * (0.7 + 0.3 * step(0.2, ndl) + 0.15 * max(ndl, 0.0)) + vec3(0.25, 0.12, 0.0) * rim, vCol.a);
+  if (uMode == 3) { // toon fire: self-lit, bright core fading to a warm rim so fireballs read as round puffs
+    float facing = max(dot(n, v), 0.0);
+    vec3 c = vCol.rgb * (0.75 + 0.35 * smoothstep(0.0, 0.7, max(ndl, 0.0)));
+    c = mix(c * 0.8, c * 1.25 + vec3(0.08, 0.06, 0.0), smoothstep(0.2, 0.9, facing));
+    outCol = vec4(c, vCol.a * smoothstep(0.0, 0.25, facing));
+    return;
+  }
+  if (uMode == 4) { // soft cartoon smoke / poofs: no hard lighting facets, edges fade out
+    float facing = max(dot(n, v), 0.0);
+    vec3 c = vCol.rgb * (0.86 + 0.14 * (n.y * 0.5 + 0.5)) + uSunCol * 0.04;
+    float a = vCol.a * smoothstep(0.0, 0.55, facing) * smoothstep(1.5, 7.0, d);
+    outCol = vec4(mix(c, uFogCol, fog), a);
     return;
   }
   if (uMode == 2) { // flat toy water with a slow shimmer
@@ -221,7 +232,7 @@ export class Mesh {
     this.count = geo.pos.length / 3;
     this.static = !!opts.static;
     this.sway = opts.sway || 0;
-    this.mode = opts.mode || 0; // 0 lit, 1 unlit, 2 water, 3 fire, 5 contact shadow, 6 cloud, 7 lit two-sided
+    this.mode = opts.mode || 0; // 0 lit, 1 unlit, 2 water, 3 fire, 4 soft smoke, 5 soft blob, 6 cloud, 7 lit two-sided
     this.transparent = !!opts.transparent;
     this.additive = !!opts.additive;
     this.cull = opts.cull !== false;

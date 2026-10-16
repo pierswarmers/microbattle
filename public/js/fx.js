@@ -75,7 +75,101 @@ export class FX {
     }
     this.add({ k: 'shock', x, y: Math.max(ground, y - 0.5) + 0.25, z, life: 0.45, s0: 0.6 * s, s1: 9 * s, c0: [1, 0.85, 0.5], a: 0.8 });
     if (y - ground < 2.5) this.scorch(x, z, 2.2 * s);
-    if (opts.text || (s >= 1.6 && R() < 0.85) || R() < 0.12) this.popText(x, y + 3 * s, z, opts.text || BOOM_WORDS[Math.floor(R() * BOOM_WORDS.length)], 1 + s * 0.35);
+    if (!opts.noText && (opts.text || (s >= 1.6 && R() < 0.85) || R() < 0.12)) this.popText(x, y + 3 * s, z, opts.text || BOOM_WORDS[Math.floor(R() * BOOM_WORDS.length)], 1 + s * 0.35);
+  }
+
+  /** MASSIVE: blinding flash, rolling fireball, a solid rising stem and a mushroom cap that cools to smoke. */
+  nuke(x, y, z) {
+    const R = Math.random;
+    const g = this.world.heightAt(x, z);
+    this.add({ k: 'glow', x, y: g + 6, z, vx: 0, vy: 0, vz: 0, life: 0.4, s0: 16, s1: 40, c0: [1, 1, 0.95], c1: [1, 0.85, 0.5], a: 1 });
+    // fireball at the base
+    for (let i = 0; i < 16; i++) {
+      const a = R() * Math.PI * 2, sp = 3 + R() * 5;
+      this.add({ k: 'fire', x: x + Math.cos(a) * 3, y: g + 3 + R() * 4, z: z + Math.sin(a) * 3, vx: Math.cos(a) * sp, vy: 3 + R() * 4, vz: Math.sin(a) * sp, drag: 1.4, rise: 2, life: 2.2 + R() * 0.8, s0: 6, s1: 10 + R() * 4, c0: [1, 1, 0.75], c1: [0.9, 0.3, 0.08], a: 1 });
+    }
+    // stem: a solid column of fire puffs climbing to the cap
+    for (let i = 0; i < 42; i++) {
+      const h = (i / 42) * 30;
+      this.add({ k: 'fire', x: x + (R() - 0.5) * 3, y: g + 2 + h * 0.3, z: z + (R() - 0.5) * 3, vx: (R() - 0.5) * 0.6, vy: 9 + h * 0.15, vz: (R() - 0.5) * 0.6, drag: 0.6, life: 3.4 + R() * 0.8,
+        s0: 3.8 - h * 0.03, s1: 4.8 - h * 0.04, c0: [1, 0.92 - h * 0.012, 0.55 - h * 0.012], c1: [0.75, 0.25, 0.08], a: 1, delay: i * 0.025 });
+    }
+    // cap: rings of puffs rolling outward, hot inside and cooler at the edge
+    for (let ring = 0; ring < 3; ring++) {
+      const n = 14 + ring * 6;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + ring * 0.3, rr = 3 + ring * 4, sp = 2.5 + ring * 1.5;
+        const hot = ring === 0;
+        this.add({ k: 'fire', x: x + Math.cos(a) * rr, y: g + 30 + ring * 1.5 + R() * 2, z: z + Math.sin(a) * rr, vx: Math.cos(a) * sp, vy: 1 + (2 - ring) * 0.8, vz: Math.sin(a) * sp, drag: 0.5, life: 4.2 + R() * 1.2,
+          s0: 4 + ring, s1: 8 + ring * 2 + R() * 2, c0: hot ? [1, 0.95, 0.6] : ring === 1 ? [1, 0.6, 0.2] : [0.85, 0.35, 0.15], c1: [0.55, 0.22, 0.12], a: 1, delay: 0.9 + ring * 0.12 + R() * 0.2 });
+      }
+    }
+    // the cooled cloud lingers as soft smoke once the fire has shrunk away
+    for (let i = 0; i < 26; i++) {
+      const a = R() * Math.PI * 2, rr = R() * 14;
+      this.add({ k: 'puff', x: x + Math.cos(a) * rr, y: g + 30 + R() * 6, z: z + Math.sin(a) * rr, vx: Math.cos(a) * 2, vy: 0.6, vz: Math.sin(a) * 2, drag: 0.3, life: 6 + R() * 2, s0: 7, s1: 13, c0: [0.62, 0.55, 0.52], c1: [0.85, 0.83, 0.82], a: 0.85, delay: 3.2 + R() * 0.6 });
+    }
+    for (let i = 0; i < 12; i++) this.add({ k: 'puff', x: x + (R() - 0.5) * 3, y: g + 4 + i * 2.3, z: z + (R() - 0.5) * 3, vx: 0, vy: 0.8, vz: 0, life: 5 + R(), s0: 3.5, s1: 5, c0: [0.6, 0.55, 0.52], c1: [0.82, 0.8, 0.78], a: 0.8, delay: 3 + i * 0.05 });
+    // shockwaves, a low racing dust skirt and debris thrown up in arcs
+    this.add({ k: 'shock', x, y: g + 0.4, z, life: 1.3, s0: 4, s1: 90, c0: [1, 0.9, 0.7], a: 1 });
+    this.add({ k: 'shock', x, y: g + 0.6, z, life: 1.8, s0: 3, s1: 60, c0: [1, 0.6, 0.3], a: 0.9, delay: 0.15 });
+    this.add({ k: 'shock', x, y: g + 31, z, life: 1.6, s0: 6, s1: 36, c0: [1, 1, 1], a: 0.7, delay: 1.0 });
+    for (let i = 0; i < 36; i++) {
+      const a = (i / 36) * Math.PI * 2, sp = 24 + R() * 12;
+      this.add({ k: 'puff', x: x + Math.cos(a) * 6, y: g + 0.8, z: z + Math.sin(a) * 6, vx: Math.cos(a) * sp, vy: 0.5, vz: Math.sin(a) * sp, drag: 1.6, life: 2 + R(), s0: 1.8, s1: 4, c0: [0.8, 0.7, 0.55], c1: [0.88, 0.84, 0.76], a: 0.7 });
+    }
+    for (let i = 0; i < 34; i++) {
+      const a = R() * Math.PI * 2, sp = 10 + R() * 22;
+      this.add({ k: 'chunk', x, y: g + 2, z, vx: Math.cos(a) * sp, vy: 14 + R() * 20, vz: Math.sin(a) * sp, grav: 26, life: 3 + R(), s0: 0.4 + R() * 0.6, rx: R() * 6, ry: R() * 6, wx: (R() - 0.5) * 18, wy: (R() - 0.5) * 18, c0: [0.4, 0.3, 0.2], bounce: true });
+      if (i % 3 === 0) this.add({ k: 'spark', x, y: g + 2, z, vx: Math.cos(a) * sp, vy: 16 + R() * 18, vz: Math.sin(a) * sp, grav: 22, life: 1.4, w: 0.25, len: 2, c0: [1, 0.9, 0.5], c1: [1, 0.3, 0.05], a: 1 });
+    }
+    this.scorch(x, z, 18);
+    this.popText(x, g + 22, z, 'KA-BOOOOM!', 2.6, '#ffdd33', true);
+  }
+
+  /** Cluster shell pops open: bright pop and a fan of glittering sparks. */
+  clusterBurst(x, y, z) {
+    const R = Math.random;
+    const cols = [[1, 0.4, 0.8], [0.6, 0.5, 1], [1, 0.85, 0.3], [0.4, 1, 0.8]];
+    this.add({ k: 'glow', x, y, z, vx: 0, vy: 0, vz: 0, life: 0.15, s0: 1.5, s1: 3.5, c0: [1, 0.9, 1], c1: [1, 0.4, 0.8], a: 1 });
+    for (let i = 0; i < 26; i++) {
+      const a = R() * Math.PI * 2, e = R() * 1.2 - 0.3, sp = 8 + R() * 10;
+      const c = cols[i % cols.length];
+      this.add({ k: 'spark', x, y, z, vx: Math.cos(a) * Math.cos(e) * sp, vy: Math.sin(e) * sp, vz: Math.sin(a) * Math.cos(e) * sp, grav: 14, drag: 1, life: 0.6 + R() * 0.4, w: 0.12, len: 0.6, c0: [1, 1, 1], c1: c, a: 1 });
+    }
+    this.add({ k: 'shock', x, y, z, life: 0.35, s0: 0.5, s1: 7, c0: [1, 0.6, 0.9], a: 0.8 });
+    this.add({ k: 'puff', x, y, z, vx: 0, vy: 1, vz: 0, life: 1.4, s0: 1, s1: 3, c0: [0.9, 0.85, 0.95], c1: [0.95, 0.95, 0.95], a: 0.6 });
+  }
+
+  /** Little bomblet blast: punchy, colourful, quick. */
+  bomblet(x, y, z) {
+    const R = Math.random;
+    const c = [[1, 0.45, 0.85], [1, 0.85, 0.3], [0.6, 0.55, 1], [0.4, 1, 0.75]][Math.floor(R() * 4)];
+    this.add({ k: 'fire', x, y: y + 0.4, z, vx: 0, vy: 3, vz: 0, drag: 2, life: 0.4, s0: 1.2, s1: 2.6, c0: [1, 1, 0.8], c1: [1, 0.45, 0.1], a: 1 });
+    for (let i = 0; i < 4; i++) { const a = R() * 6.28; this.add({ k: 'fire', x, y: y + 0.4, z, vx: Math.cos(a) * 5, vy: 2 + R() * 3, vz: Math.sin(a) * 5, drag: 4, life: 0.35 + R() * 0.2, s0: 0.7, s1: 1.4, c0: [1, 0.9, 0.5], c1: [0.95, 0.3, 0.08], a: 1 }); }
+    for (let i = 0; i < 8; i++) { const a = R() * 6.28, sp = 6 + R() * 8; this.add({ k: 'spark', x, y: y + 0.3, z, vx: Math.cos(a) * sp, vy: 5 + R() * 6, vz: Math.sin(a) * sp, grav: 20, life: 0.35, w: 0.08, len: 0.5, c0: [1, 1, 1], c1: c, a: 1 }); }
+    this.add({ k: 'shock', x, y: this.world.heightAt(x, z) + 0.25, z, life: 0.3, s0: 0.5, s1: 5, c0: c, a: 0.8 });
+    this.add({ k: 'puff', x, y: y + 0.5, z, vx: 0, vy: 1.5, vz: 0, life: 1.2, s0: 0.7, s1: 2.2, c0: [0.6, 0.6, 0.6], c1: [0.85, 0.85, 0.85], a: 0.55 });
+    if (y - this.world.heightAt(x, z) < 2) this.scorch(x, z, 1.4);
+  }
+
+  /** High-velocity round strike: blinding blue-white spark fan and a hard shock ring. */
+  hvImpact(x, y, z) {
+    const R = Math.random;
+    this.add({ k: 'glow', x, y, z, vx: 0, vy: 0, vz: 0, life: 0.12, s0: 2.5, s1: 5, c0: [0.8, 0.95, 1], c1: [0.4, 0.7, 1], a: 1 });
+    for (let i = 0; i < 40; i++) {
+      const a = R() * Math.PI * 2, sp = 14 + R() * 24;
+      this.add({ k: 'spark', x, y, z, vx: Math.cos(a) * sp, vy: 3 + R() * 14, vz: Math.sin(a) * sp, grav: 24, life: 0.4 + R() * 0.4, w: 0.09, len: 1.2, c0: [1, 1, 1], c1: [0.4, 0.8, 1], a: 1 });
+    }
+    this.add({ k: 'shock', x, y, z, life: 0.3, s0: 1, s1: 11, c0: [0.7, 0.9, 1], a: 1 });
+    this.popText(x, y + 3, z, ['THWACK!', 'CLANG!', 'KER-CHUNK!'][Math.floor(R() * 3)], 1.1, '#9fe7ff', true);
+  }
+
+  /** One drifting puff of a smoke screen. */
+  smokePuff(x, y, z, r) {
+    const R = Math.random;
+    const g = 0.82 + R() * 0.12;
+    this.add({ k: 'puff', x: x + (R() - 0.5) * r * 1.4, y: y + R() * 3, z: z + (R() - 0.5) * r * 1.4, vx: (R() - 0.5) * 0.8, vy: 0.4 + R() * 0.5, vz: (R() - 0.5) * 0.8, life: 3 + R() * 1.5, s0: 2.5, s1: 5 + R() * 2.5, c0: [g, g, g], c1: [g + 0.05, g + 0.05, g + 0.05], a: 0.85 });
   }
 
   /** Smaller puff for bullet hits. */
@@ -130,7 +224,9 @@ export class FX {
 
   flame(x, y, z, vx, vy, vz) {
     const R = Math.random;
-    this.add({ k: 'glow', x, y, z, vx, vy, vz, drag: 1.2, rise: 2.5, life: 0.5 + R() * 0.15, s0: 0.35, s1: 2.2, c0: [1, 0.95, 0.5], c1: [0.9, 0.15, 0.02], a: 0.9 });
+    // a licking tongue of fire: small hot core growing into an orange-red billow, plus the odd ember
+    this.add({ k: 'fire', x, y, z, vx: vx * (0.9 + R() * 0.2), vy, vz: vz * (0.9 + R() * 0.2), drag: 1.4, rise: 3, life: 0.45 + R() * 0.2, s0: 0.25, s1: 1.4 + R() * 0.9, c0: [1, 0.9, 0.45], c1: [0.85, 0.18, 0.03], a: 1 });
+    if (R() < 0.25) this.add({ k: 'spark', x, y, z, vx: vx * 0.8 + (R() - 0.5) * 4, vy: vy + 2 + R() * 3, vz: vz * 0.8 + (R() - 0.5) * 4, grav: 4, life: 0.6 + R() * 0.4, w: 0.06, len: 0.3, c0: [1, 0.8, 0.3], c1: [1, 0.3, 0.05], a: 1 });
   }
 
   scorch(x, z, r) {
@@ -191,8 +287,9 @@ export class FX {
         const s = lerp(p.s0, p.s1, Math.sqrt(t));
         const c0 = p.c0, c1 = p.c1;
         const r = lerp(c0[0], c1[0], t), g = lerp(c0[1], c1[1], t), b = lerp(c0[2], c1[2], t);
-        const a = p.a * (p.k === 'puff' ? 1 - t : p.k === 'fire' ? (t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3) : 1 - t * t);
-        const sc = p.k === 'fire' && t > 0.75 ? s * (1 - (t - 0.75) * 2) : s;
+        const a = p.a * (p.k === 'puff' ? 1 - t * t : p.k === 'fire' ? 1 : 1 - t * t);
+        // fire stays solid and shrinks away at the end instead of going see-through
+        const sc = p.k === 'fire' && t > 0.6 ? s * Math.max(0, 1 - (t - 0.6) / 0.4) : s;
         m4.compose(m, p.x, p.y, p.z, p.age * 2, p.age, 0, sc);
         (p.k === 'glow' ? M.glow : p.k === 'fire' ? M.fire : M.puff).add(m, r, g, b, a);
       } else if (p.k === 'spark') {
