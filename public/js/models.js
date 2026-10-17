@@ -560,8 +560,20 @@ export function createModels(r, rng, season = 'summer') {
   M.shock = new Mesh(r, new Geo().ring(0, 0, 0, 0.8, 1, 24, [1, 1, 1, 1]), { capacity: 64, transparent: true, additive: true, mode: 1, cull: false, layer: 6 });
   M.decal = new Mesh(r, blob, { capacity: 256, transparent: true, layer: 1, mode: 5 });
   M.track = new Mesh(r, new Geo().box(0, 0, 0, 1, 0.01, 1, [1, 1, 1, 1]), { capacity: 2048, transparent: true, layer: 1, mode: 1 });
-  M.thinRing = new Mesh(r, new Geo().ring(0, 0, 0, 0.965, 1, 64, [1, 1, 1, 1]), { capacity: 32, transparent: true, layer: 2, mode: 1, cull: false });
   M.teamRing = new Mesh(r, new Geo().ring(0, 0, 0, 0.82, 1, 28, [1, 1, 1, 1]), { capacity: 16, transparent: true, layer: 2, mode: 1, cull: false });
+  // ground-hugging rings for target areas: one annulus sector per instance, each tilted to follow the
+  // terrain under it (Client.groundRing). The x-ray copy shows the parts hidden by hills and props, faintly.
+  const sector = (r0, seg) => {
+    const a = (Math.PI * 2) / seg, c = Math.cos(a), s = Math.sin(a);
+    const g = new Geo();
+    g.quad([r0, 0, 0], [1, 0, 0], [c, 0, s], [r0 * c, 0, r0 * s], [1, 1, 1, 1]);
+    return g;
+  };
+  for (const [k, r0, seg] of [['aimRing', 0.82, 48], ['dangerRing', 0.965, 96]]) {
+    M[k] = new Mesh(r, sector(r0, seg), { capacity: 256, transparent: true, layer: 2, mode: 1, cull: false, ground: true });
+    M[k + 'X'] = new Mesh(r, sector(r0, seg), { capacity: 256, transparent: true, layer: 2, mode: 1, cull: false, xray: true });
+    M[k].r0 = M[k + 'X'].r0 = r0; M[k].seg = M[k + 'X'].seg = seg;
+  }
   M.bubble = new Mesh(r, unitSphere, { capacity: 8, transparent: true, additive: true, mode: 1, layer: 8, cull: false });
   // light beacon over pickups: bright at the base, fading to nothing at the top (additive)
   const cone = new Geo();

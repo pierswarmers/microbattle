@@ -237,6 +237,8 @@ export class Mesh {
     this.additive = !!opts.additive;
     this.cull = opts.cull !== false;
     this.layer = opts.layer || 0;
+    this.ground = !!opts.ground; // ground decal: pulled towards the camera so it never z-fights the terrain
+    this.xray = !!opts.xray; // drawn only where something is in front of it
     // every solid lit prop gets a cartoon outline unless it opts out
     this.outline = opts.outline ?? (this.mode === 0 && !this.transparent && this.cull);
     this.outlineMax = opts.outlineMax || 0.16;
@@ -474,9 +476,11 @@ export class Renderer {
       if (!m.transparent || m.n === 0) continue;
       if (m.additive) gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
       else gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-      if (m.mode === 5) { gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-2, -4); }
+      if (m.mode === 5 || m.ground) { gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-2, -4); }
+      if (m.xray) gl.depthFunc(gl.GREATER);
       this.drawMesh(m);
-      if (m.mode === 5) gl.disable(gl.POLYGON_OFFSET_FILL);
+      if (m.xray) gl.depthFunc(gl.LESS);
+      if (m.mode === 5 || m.ground) gl.disable(gl.POLYGON_OFFSET_FILL);
     }
     gl.depthMask(true);
     gl.disable(gl.BLEND);

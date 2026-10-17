@@ -964,10 +964,9 @@ export class Client {
       const g = this.world.heightAt(s.x, s.z);
       const pulse = 0.55 + Math.sin(this.time * (s.t < 2 ? 18 : 8)) * 0.35;
       // a clean danger circle: thin bright edge, a shrinking countdown ring and a soft red fill
-      for (const k of [1, 0.985]) { alignToNormal(m, s.x, g + 0.4, s.z, [0, 1, 0], 0, s.r * k, 1, s.r * k); M.thinRing.add(m, 1, 0.15, 0.1, pulse); }
+      for (const k of [1, 0.985]) this.groundRing(M.dangerRing, s.x, s.z, s.r * k, 0.4, 1, 0.15, 0.1, pulse);
       const cd = clamp(s.t / WEAPONS.strike.delay, 0, 1);
-      alignToNormal(m, s.x, g + 0.35, s.z, [0, 1, 0], 0, s.r * cd, 1, s.r * cd);
-      M.thinRing.add(m, 1, 0.8, 0.3, 0.8);
+      if (cd > 0.02) this.groundRing(M.dangerRing, s.x, s.z, s.r * cd, 0.35, 1, 0.8, 0.3, 0.8);
       M.decal.add(alignToNormal(m, s.x, g + 0.2, s.z, [0, 1, 0], 0, s.r, 1, s.r), 1, 0.1, 0.05, 0.14);
       m4.compose(m, s.x, g, s.z, this.time, 0, 0, 1, 45, 1);
       M.beacon.add(m, 0.7, 0.1, 0.06, 0.8);
@@ -1008,8 +1007,36 @@ export class Client {
     this.aimEnd = end;
     if (end) {
       const R = W.kind === 'strike' ? W.radius : W.kind === 'cluster' ? W.spreadR : W.splash || 2;
-      alignToNormal(m, end[0], end[1] + 0.15, end[2], this.world.normalAt(end[0], end[2], [0, 1, 0]), this.time, R, 1, R);
-      M.teamRing.add(m, me.color[0], me.color[1], me.color[2], 0.7);
+      this.groundRing(M.aimRing, end[0], end[2], R, 0.25, me.color[0], me.color[1], me.color[2], 0.7, this.time);
+    }
+  }
+
+  /**
+   * A ring of radius R lying on the terrain around (cx, cz). A flat disc tilted to the centre's normal
+   * sinks into bumps and slopes across a wide circle (chunks of it vanish), so each sector is tilted on
+   * its own to pass through the ground heights along its edges; neighbours share those heights, so the
+   * ring stays joined. Parts hidden behind hills or props still show faintly through the x-ray copy.
+   */
+  groundRing(mesh, cx, cz, R, lift, r, g, b, a, spin = 0) {
+    const xm = this.M[mesh === this.M.aimRing ? 'aimRingX' : 'dangerRingX'];
+    const m = this.m, w = this.world, n = mesh.seg, da = (Math.PI * 2) / n, rm = R * (1 + mesh.r0) / 2;
+    const h = (x, z) => Math.max(w.heightAt(cx + x, cz + z), WATER_LEVEL) + lift;
+    let a0 = spin, x0 = Math.cos(a0) * rm, z0 = Math.sin(a0) * rm, h0 = h(x0, z0);
+    for (let i = 0; i < n; i++) {
+      const a1 = a0 + da, x1 = Math.cos(a1) * rm, z1 = Math.sin(a1) * rm, h1 = h(x1, z1);
+      const am = a0 + da / 2, x2 = Math.cos(am) * R, z2 = Math.sin(am) * R;
+      // the plane y = A + B*x + C*z through both edge midpoints and the middle of the outer rim
+      const h2 = h(x2, z2);
+      const ax = x1 - x0, az = z1 - z0, bx = x2 - x0, bz = z2 - z0, det = ax * bz - az * bx;
+      const B = ((h1 - h0) * bz - az * (h2 - h0)) / det, C = (ax * (h2 - h0) - bx * (h1 - h0)) / det;
+      const c = Math.cos(a0), s = Math.sin(a0);
+      m[0] = R * c; m[1] = R * (B * c + C * s); m[2] = R * s; m[3] = 0;
+      m[4] = 0; m[5] = 1; m[6] = 0; m[7] = 0;
+      m[8] = -R * s; m[9] = R * (C * c - B * s); m[10] = R * c; m[11] = 0;
+      m[12] = cx; m[13] = h0 - B * x0 - C * z0; m[14] = cz; m[15] = 1;
+      mesh.add(m, r, g, b, a);
+      xm.add(m, r, g, b, a * 0.3);
+      a0 = a1; x0 = x1; z0 = z1; h0 = h1;
     }
   }
 }
