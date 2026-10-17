@@ -379,7 +379,7 @@ export class HUD {
 
   drawViewLabel() {
     const g = this.g;
-    const any = g.cfg.mode === 'any';
+    const any = g.viewMode() === 'any';
     this.label(14, 22, `VIEW: ${VIEW_NAMES[g.view] || g.view}${any ? '  ·  C to switch' : ''}  ·  Esc help`, 12, g.viewFlash > 0 ? '#ffdd33' : 'rgba(255,255,255,0.75)', 'left');
     if (g.viewFlash > 0) this.label(this.W / 2, this.H * 0.16, VIEW_NAMES[g.view], 34, '#ffdd33', 'center', 'middle', COMIC, '#2a1033');
   }
@@ -506,7 +506,15 @@ export class HUD {
       ctx.fillStyle = ['#59e666', '#ffd133', '#ff5247'][c - 1]; ctx.fillText(c, 0, 0);
       ctx.restore();
     }
+    if (g.snap && g.snap.rnd) this.drawRoundBanner(W, H * 0.1, g.snap.rnd[0], g.snap.rnd[1], g.snap.rnd[2]);
     this.controlsCard(W / 2, H - 200, 0.85);
+  }
+
+  /** "ROUND 2 OF 4" + the round's view mode (cycle matches). */
+  drawRoundBanner(W, y, n, of, view, prefix = 'ROUND') {
+    this.label(W / 2, y, `${prefix} ${n} OF ${of}`, 22, '#fff', 'center', 'middle', COMIC, '#2a1033');
+    this.label(W / 2, y + 40, view === 'any' ? 'FREE CHOICE' : VIEW_NAMES[view], 44, '#ffdd33', 'center', 'middle', COMIC, '#2a1033');
+    this.label(W / 2, y + 74, view === 'any' ? 'press C to switch views' : 'everyone plays in this view', 14, '#fff', 'center');
   }
 
   controlsCard(cx, cy, k = 1) {
@@ -546,6 +554,7 @@ export class HUD {
     ctx.fillStyle = `rgba(10,15,30,${0.35 * k})`; ctx.fillRect(0, 0, W, H);
     const s = g.snap;
     const w = s && s.win >= 0 ? g.tanks.get(s.win) : null;
+    const rnd = s && s.rnd, final = rnd && !rnd[3];
     if (!this.confetti || this.confettiFor !== s.win) {
       this.confettiFor = s.win;
       const cols = ['#ff5247', '#4d8cff', '#ffd133', '#59e666', '#ff7ad9', '#ffffff'];
@@ -561,27 +570,44 @@ export class HUD {
     const ty0 = H * 0.12;
     ctx.save(); ctx.translate(W / 2, ty0);
     const sc = 0.6 + 0.4 * k + Math.sin(g.realTime * 3) * 0.03; ctx.scale(sc, sc);
-    this.label(0, 0, w ? `${w.net.name.replace(' (bot)', '')} WINS!` : 'DRAW!', 78, w ? w.css : '#fff', 'center', 'middle', COMIC, '#2a1033');
+    // a cycle match's final screen crowns the overall winner (most total score, then rounds won)
+    const tot = final && s.tot ? [...s.tot].sort((a, b) => b[2] - a[2] || b[5] - a[5] || a[4] - b[4]) : null;
+    const champ = tot && tot[0] && !(tot[1] && tot[1][2] === tot[0][2] && tot[1][5] === tot[0][5]) ? tot[0] : null;
+    if (tot) this.label(0, 0, champ ? `${champ[1].replace(' (bot)', '')} WINS THE MATCH!` : 'MATCH DRAWN!', 64, champ ? PLAYER_COLORS[champ[0]].css : '#fff', 'center', 'middle', COMIC, '#2a1033');
+    else this.label(0, 0, w ? `${w.net.name.replace(' (bot)', '')} WINS!` : 'DRAW!', 78, w ? w.css : '#fff', 'center', 'middle', COMIC, '#2a1033');
     ctx.restore();
-    this.label(W / 2, ty0 + 52, s.why || '', 16, '#fff', 'center');
-    const rows = [...g.tanks.values()].sort((a, b) => b.net.s - a.net.s || a.net.d - b.net.d);
-    const tx = W / 2 - 220, ty = H - 80 - rows.length * 34;
-    this.roundRect(tx - 10, ty - 30, 460, 40 + rows.length * 34, 14, 'rgba(15,20,35,0.75)');
-    [['PLAYER', 0], ['VEHICLE', 200], ['KILLS', 320], ['DEATHS', 380]].forEach(([c, x]) => this.label(tx + x, ty - 10, c, 11, '#9ab', 'left'));
-    rows.forEach((t, i) => {
-      const y = ty + 18 + i * 34;
-      this.label(tx, y, `${i === 0 && w ? '🏆 ' : ''}${t.net.name}`, 15, t.css, 'left');
-      this.label(tx + 200, y, t.def.name, 13, '#fff', 'left');
-      this.label(tx + 320, y, String(t.net.k), 14, '#fff', 'left');
-      this.label(tx + 380, y, String(t.net.d), 14, '#fff', 'left');
-    });
+    this.label(W / 2, ty0 + 52, rnd ? `Round ${rnd[0]} of ${rnd[1]}: ${w ? w.net.name.replace(' (bot)', '') + ' — ' : ''}${s.why || ''}` : s.why || '', 16, '#fff', 'center');
+    // cycle match: say which view the next round forces (the full banner shows again at its countdown)
+    if (rnd && !final) this.label(W / 2, ty0 + 74, `NEXT: ROUND ${rnd[0] + 1} OF ${rnd[1]} · ${rnd[3] === 'any' ? 'FREE CHOICE (C to switch)' : VIEW_NAMES[rnd[3]] + ' VIEW'}`, 15, '#ffdd33', 'center', 'middle', COMIC);
+    if (tot) {
+      const tx = W / 2 - 230, ty = H - 80 - tot.length * 34;
+      this.roundRect(tx - 10, ty - 30, 480, 40 + tot.length * 34, 14, 'rgba(15,20,35,0.75)');
+      [['MATCH TOTALS', 0], ['SCORE', 200], ['ROUNDS', 270], ['KILLS', 350], ['DEATHS', 410]].forEach(([c, x]) => this.label(tx + x, ty - 10, c, 11, '#9ab', 'left'));
+      tot.forEach(([id, name, sc, k, d, rw], i) => {
+        const y = ty + 18 + i * 34;
+        this.label(tx, y, `${i === 0 && champ ? '🏆 ' : ''}${name}`, 15, PLAYER_COLORS[id].css, 'left');
+        [sc, rw, k, d].forEach((v, j) => this.label(tx + [200, 270, 350, 410][j], y, String(v), 14, '#fff', 'left'));
+      });
+    } else {
+      const rows = [...g.tanks.values()].sort((a, b) => b.net.s - a.net.s || a.net.d - b.net.d);
+      const tx = W / 2 - 220, ty = H - 80 - rows.length * 34;
+      this.roundRect(tx - 10, ty - 30, 460, 40 + rows.length * 34, 14, 'rgba(15,20,35,0.75)');
+      [['PLAYER', 0], ['VEHICLE', 200], ['KILLS', 320], ['DEATHS', 380]].forEach(([c, x]) => this.label(tx + x, ty - 10, c, 11, '#9ab', 'left'));
+      rows.forEach((t, i) => {
+        const y = ty + 18 + i * 34;
+        this.label(tx, y, `${i === 0 && w ? '🏆 ' : ''}${t.net.name}`, 15, t.css, 'left');
+        this.label(tx + 200, y, t.def.name, 13, '#fff', 'left');
+        this.label(tx + 320, y, String(t.net.k), 14, '#fff', 'left');
+        this.label(tx + 380, y, String(t.net.d), 14, '#fff', 'left');
+      });
+    }
     // intermission: everyone can pick (or change) their vehicle for the next round
-    const y0 = ty0 + 80, ch = 180;
+    const y0 = ty0 + 92, ch = 180;
     this.seatCards(W, y0, ch, true);
     const blink = Math.floor(g.realTime * 2.5) % 2 === 0;
     const secs = s.it >= 0 ? ` in ${s.it}s` : ' soon';
     this.label(W / 2, y0 + ch + 26, g.you >= 0 ? '←/→ choose vehicle for the next round · SPACE ready · ENTER start now' : 'You are spectating', 18, blink ? '#ffdd33' : '#fff', 'center', 'middle', COMIC);
-    this.label(W / 2, y0 + ch + 50, `Next round starts${secs}, or when everyone is ready.`, 13, '#dde', 'center');
+    this.label(W / 2, y0 + ch + 50, `${tot ? 'New match' : 'Next round'} starts${secs}, or when everyone is ready.`, 13, '#dde', 'center');
   }
 
   // ---------- network lobby ----------
@@ -602,7 +628,7 @@ export class HUD {
     });
     ctx.restore();
     const cfg = g.cfg || {};
-    const modeTxt = cfg.mode === 'any' ? 'any view (C to switch)' : (VIEW_NAMES[cfg.mode] || '') + ' view';
+    const modeTxt = cfg.mode === 'any' ? 'any view (C to switch)' : cfg.mode === 'cycle' ? "4 rounds: bird's-eye → chase → commander → free choice" : (VIEW_NAMES[cfg.mode] || '') + ' view';
     this.label(W / 2, H * 0.12 + 62, `NETWORK BATTLE · ${modeTxt} · first to ${cfg.scoreLimit} · ${cfg.difficulty} bots`, 15, '#fff', 'center');
     this.label(W / 2, H * 0.12 + 86, `Friends join by opening this page from your machine's network address (port ${location.port || 80})`, 13, '#cfe', 'center');
     const ch = 290, y0 = H * 0.3;

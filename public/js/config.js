@@ -1,9 +1,12 @@
 // Game options. Shared by the browser (main.js) and the CLI launcher (microbattle.js).
 import { TANK_ORDER } from './defs.js';
 
+/** View for each round of a --mode cycle match ('any' = players switch with C). */
+export const CYCLE_VIEWS = ['birdseye', 'chase', 'commander', 'any'];
+
 /** name: [default, type, description, allowed values] */
 export const OPTIONS = {
-  mode: ['any', 'enum', "Camera: birdseye (high overview), commander (gunner's sight), chase (behind the turret), or any (players switch with C)", ['any', 'birdseye', 'commander', 'chase']],
+  mode: ['any', 'enum', "Camera: birdseye (high overview), commander (gunner's sight), chase (behind the turret), any (players switch with C), or cycle (a 4-round match: everyone in bird's-eye, then chase, then commander, then free choice)", ['any', 'birdseye', 'commander', 'chase', 'cycle']],
   players: [0, 'int', 'Start automatically once this many players have joined (0 = wait for someone to press Start)'],
   bots: ['auto', 'intOrAuto', "Bot count, or 'auto' to fill up to 4 tanks"],
   botTanks: ['', 'list', 'Tank types for bots, comma separated (random if empty)'],

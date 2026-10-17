@@ -32,7 +32,8 @@ function usage() {
     '  node microbattle.js                                   # lobby; friends open the printed LAN URL',
     '  node microbattle.js --mode commander --players 2       # start when 2 players have joined',
     '  node microbattle.js --no-lobby --difficulty hard       # bots fight now; players drop in any time',
-    '  node microbattle.js --lives 3 --map-size 500 --seed 42', '');
+    '  node microbattle.js --lives 3 --map-size 500 --seed 42',
+    '  node microbattle.js --mode cycle --score-limit 5       # 4 rounds: birdseye, chase, commander, then free choice', '');
   return lines.join('\n');
 }
 

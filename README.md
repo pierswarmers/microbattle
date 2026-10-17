@@ -22,13 +22,24 @@ The server binds `0.0.0.0` by default so it can be reached from your network. Us
 
 ## Views
 
-Press **C** to switch views, unless the server fixed the view with `--mode`.
+Press **C** to switch views, unless the server fixed the view with `--mode` (or is running a view cycle match).
 
 | View | What you see |
 |---|---|
 | **Chase cam** | The camera sits slightly above and behind your tank, locked to the turret direction. |
 | **Commander** | The gunner's sight, with a reticle, range readout, compass, zoom and a hull-direction indicator. The heat seeker can lock on in this view. |
 | **Bird's-eye** | A high overview of the battlefield. Scroll to zoom. |
+
+### View cycle match
+
+`--mode cycle` plays a 4-round match. The server sets the view for everyone each round, and **C** is disabled until the last round:
+
+1. Bird's-eye
+2. Chase cam
+3. Commander
+4. Free choice (**C** switches)
+
+Each round ends on the normal rules (`--score-limit`, `--time-limit`, `--lives`). A short intermission then announces the next round's view. After round 4, the results screen shows the match totals (score, rounds won, kills, deaths) and crowns the overall winner. Then a new match starts from round 1.
 
 ## Controls
 
@@ -90,7 +101,7 @@ Run `node microbattle.js --help` for the full list.
 
 | Option | Default | What it does |
 |---|---|---|
-| `--mode any\|chase\|commander\|birdseye` | any | Fix the view for everyone, or let each player choose |
+| `--mode any\|chase\|commander\|birdseye\|cycle` | any | Fix the view for everyone, let each player choose, or play a 4-round view cycle match (see above) |
 | `--players N` | 0 | Start automatically once N players have joined |
 | `--bots N\|auto` / `--bot-tanks a,b` / `--difficulty easy\|normal\|hard` | auto / random / normal | Bot settings |
 | `--no-lobby` | lobby on | Start straight away with bots; players join while the match runs |
