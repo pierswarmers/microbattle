@@ -82,7 +82,8 @@ export class Client {
     if (fresh) this.build();
     for (const o of this.world.obstacles) o.alive = true;
     for (const i of m.dead) if (this.world.obstacles[i]) this.world.obstacles[i].alive = false;
-    this.view = this.cfg.mode === 'any' ? (VIEWS.includes(this.opts.view) ? this.opts.view : 'chase') : this.cfg.mode;
+    this.view = VIEWS.includes(this.cfg.mode) ? this.cfg.mode : VIEWS.includes(this.opts.view) ? this.opts.view : 'chase';
+    this.roundSeen = 0;
     this.zoomH = this.cfg.zoom;
     document.getElementById('loading')?.remove();
   }
@@ -100,6 +101,17 @@ export class Client {
 
   get me() { return this.tanks.get(this.you); }
 
+  /** The view rule in force: a fixed view, or 'any' (C switches). In cycle mode the server sets it per round. */
+  viewMode() { return this.cfg.mode === 'cycle' ? (this.snap && this.snap.rnd ? this.snap.rnd[2] : 'any') : this.cfg.mode; }
+
+  /** A new round of a cycle match: switch everyone to the round's view. */
+  onRound(rnd) {
+    this.roundSeen = rnd[0];
+    if (VIEWS.includes(rnd[2])) this.view = rnd[2];
+    if (this.view === 'birdseye') this.input.releaseLock();
+    this.viewFlash = 0;
+  }
+
   // ---------------- replication ----------------
   onSnap(s) {
     const now = performance.now() / 1000;
@@ -116,6 +128,7 @@ export class Client {
     if (this.clockOff === undefined || Math.abs(off - this.clockOff) > 0.25) this.clockOff = off;
     else this.clockOff += (off - this.clockOff) * 0.04;
     this.snap = s;
+    if (s.rnd && s.rnd[0] !== this.roundSeen) this.onRound(s.rnd);
     if (s.state === 'countdown' && prevState !== 'countdown') this.onMatchStart();
     // tanks
     const seen = new Set();
@@ -444,7 +457,7 @@ export class Client {
     const I = this.input, ms = I.mouse;
     const c = I.read();
     const me = this.me;
-    if (c.view && this.cfg.mode === 'any') {
+    if (c.view && this.viewMode() === 'any') {
       this.view = VIEWS[(VIEWS.indexOf(this.view) + 1) % VIEWS.length];
       this.sound.play('switch', 0.5);
       this.viewFlash = 1.4;

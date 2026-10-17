@@ -2,6 +2,7 @@
 // inputs and broadcasts snapshots (+ the events that happened since the last one) at 30 Hz.
 import { Sim, DT } from '../public/js/sim.js';
 import { TANK_ORDER } from '../public/js/defs.js';
+import { CYCLE_VIEWS } from '../public/js/config.js';
 
 const SNAP_EVERY = 2; // steps per snapshot (60 Hz sim -> 30 Hz network)
 let nextClientId = 1;
@@ -17,6 +18,9 @@ export class Room {
     this.overT = 0;
     this.stepN = 0;
     this.pending = [];
+    this.round = 0; // --mode cycle: index into CYCLE_VIEWS
+    this.totals = new Map(); // --mode cycle: slot -> running totals across the match's rounds
+    this.tallied = false;
     if (!cfg.lobby) this.start();
     let last = performance.now(), acc = 0;
     this.timer = setInterval(() => {
@@ -100,7 +104,7 @@ export class Room {
       case 'start':
         if (c.slot < 0) return; // spectators can't start or restart
         if (this.sim.state === 'lobby') this.start();
-        else if (this.sim.state === 'over' && this.overT > 2) this.restart();
+        else if (this.sim.state === 'over' && this.overT > 2) this.advance();
         break;
       case 'in': {
         if (c.slot < 0) return;
@@ -136,6 +140,8 @@ export class Room {
   start() {
     const entries = this.humans().map((c) => ({ slot: c.slot, human: true, type: c.type, name: c.name }));
     this.sim.startMatch(entries);
+    // cycle match: a bot keeps its name from round to round so the match totals read sensibly
+    for (const t of this.sim.tanks) { const o = this.totals.get(t.id); if (o && !o.human && !t.human) t.name = o.name; }
     this.overT = 0;
     this.log(`match started: ${entries.length} player(s) + ${this.sim.tanks.length - entries.length} bot(s)`);
     this.broadcastLobby();
@@ -146,6 +152,27 @@ export class Room {
     this.start();
   }
 
+  get cycle() { return this.cfg.mode === 'cycle'; }
+  get lastRound() { return !this.cycle || this.round >= CYCLE_VIEWS.length - 1; }
+
+  /** After a round: next round of a cycle match, or a fresh match. */
+  advance() {
+    if (this.lastRound) { this.round = 0; this.totals.clear(); } else this.round++;
+    if (this.cycle) this.log(`round ${this.round + 1}/${CYCLE_VIEWS.length}: ${CYCLE_VIEWS[this.round]} view`);
+    this.restart();
+  }
+
+  /** Add the finished round's results to the match totals. */
+  tally() {
+    const win = this.sim.winner;
+    for (const t of this.sim.tanks) {
+      const o = this.totals.get(t.id) || { id: t.id, s: 0, k: 0, d: 0, w: 0 };
+      o.name = t.name; o.human = t.human; o.s += t.score; o.k += t.kills; o.d += t.deaths;
+      if (win === t) o.w++;
+      this.totals.set(t.id, o);
+    }
+  }
+
   tick() {
     const sim = this.sim;
     if (sim.state === 'lobby' && this.cfg.lobbyTimeout > 0 && this.humans().length) {
@@ -153,7 +180,12 @@ export class Room {
       if (this.lobbyT <= 0) this.start();
     }
     sim.step(DT);
-    if (sim.state === 'over') { this.overT += DT; if (this.overT > 12) this.restart(); }
+    if (sim.state === 'over') {
+      if (this.cycle && !this.tallied) { this.tallied = true; this.tally(); }
+      this.overT += DT;
+      // between cycle rounds there's a short intermission; the final results stay up longer
+      if (this.overT > (this.lastRound ? 15 : 8)) this.advance();
+    } else this.tallied = false;
     this.stepN++;
     if (this.stepN % SNAP_EVERY === 0) this.broadcastSnapshot();
   }
@@ -162,6 +194,10 @@ export class Room {
     const snap = this.sim.snapshot();
     snap.t = 'snap';
     snap.ev = this.sim.drainEvents();
+    if (this.cycle) {
+      snap.rnd = [this.round + 1, CYCLE_VIEWS.length, CYCLE_VIEWS[this.round], CYCLE_VIEWS[this.round + 1] || ''];
+      if (this.sim.state === 'over') snap.tot = [...this.totals.values()].map((o) => [o.id, o.name, o.s, o.k, o.d, o.w]);
+    }
     snap.lt = this.cfg.lobbyTimeout > 0 && this.sim.state === 'lobby' ? Math.max(0, Math.round(this.lobbyT)) : -1;
     const msg = JSON.stringify(snap);
     // slow clients just miss a snapshot rather than buffering without limit
