@@ -2,6 +2,10 @@
 import { Geo, T } from './geo.js';
 import { Mesh } from './gl.js';
 
+/** Apples hanging on each fruit tree per season; they are separate instances so they can be knocked off. */
+export const APPLES = { summer: 9, autumn: 5 };
+const APPLE = [0.92, 0.16, 0.14, 0];
+
 const PAINT = [1, 1, 1, 1];
 const PAINT2 = [0.82, 0.82, 0.82, 1];
 const PAINT3 = [0.66, 0.66, 0.66, 1];
@@ -136,16 +140,27 @@ function tree(kind, rng, season) {
     }
     if (kind === 'fruit' && season !== 'winter') {
       // spring blossom or summer apples dotted over the canopy (autumn keeps a few late apples)
-      const n = season === 'spring' ? 30 : season === 'autumn' ? 5 : 9;
-      const col = season === 'spring' ? [1, 0.72, 0.84, 0] : [0.92, 0.16, 0.14, 0];
-      const rad = season === 'spring' ? 0.26 : 0.24;
+      // apples are only recorded here (drawn per instance by the world) so they can fall off
+      const n = season === 'spring' ? 30 : APPLES[season];
+      g.apples = [];
       for (let i = 0; i < n; i++) {
         const [x, y, z, r] = top[i % top.length];
         const a = rng() * 6.28, e = (rng() - 0.2) * 1.2;
-        g.sphere(x + Math.cos(a) * Math.cos(e) * r * 0.98, y + Math.sin(e) * r * 0.98, z + Math.sin(a) * Math.cos(e) * r * 0.98, rad, 1, col);
+        const p = [x + Math.cos(a) * Math.cos(e) * r * 0.98, y + Math.sin(e) * r * 0.98, z + Math.sin(a) * Math.cos(e) * r * 0.98];
+        if (season === 'spring') g.sphere(p[0], p[1], p[2], 0.26, 1, [1, 0.72, 0.84, 0]);
+        else g.apples.push(p);
       }
     }
   }
+  return g;
+}
+
+/** One apple at its centre: same ball as the old baked-in ones, plus a stalk and a leaf. */
+function apple() {
+  const g = new Geo();
+  g.sphere(0, 0, 0, 0.24, 1, APPLE);
+  g.cyl(0, 0.18, 0, 0.03, 0.025, 0.14, 4, [0.4, 0.26, 0.14, 0]);
+  g.sphere(0.07, 0.29, 0, 0.07, 0, [0.35, 0.7, 0.25, 0], 0, Math.random, 0.4);
   return g;
 }
 
@@ -506,6 +521,9 @@ export function createModels(r, rng, season = 'summer') {
   M.treePineG = new Mesh(r, tp, ghost);
   M.treeFruitG = new Mesh(r, tf, ghost);
   M.mushroomG = new Mesh(r, mushroom(rng), { capacity: 16, ghost: true, layer: 8 });
+  M.appleSpots = tf.apples || [];
+  M.apple = new Mesh(r, apple(), { capacity: 1024, outlineMax: 0.04 });
+  M.appleG = new Mesh(r, apple(), { capacity: 64, ghost: true, layer: 8 });
   M.bush = new Mesh(r, bush(rng, false, season), { capacity: 256 });
   M.bushBerry = new Mesh(r, bush(rng, season !== 'winter', season), { capacity: 256 });
   const rk = rock(rng, season);

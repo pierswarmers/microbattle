@@ -83,6 +83,7 @@ export class Client {
     if (fresh) this.build();
     for (const o of this.world.obstacles) o.alive = true;
     for (const i of m.dead) if (this.world.obstacles[i]) this.world.obstacles[i].alive = false;
+    this.world.resetApples(m.apples || []);
     this.view = this.cfg.mode === 'any' ? (VIEWS.includes(this.opts.view) ? this.opts.view : 'chase') : this.cfg.mode;
     this.zoomH = this.cfg.zoom;
     document.getElementById('loading')?.remove();
@@ -269,7 +270,8 @@ export class Client {
       case 'impact': fx.impact(e.x, e.y, e.z, [1, 0.9, 0.5], 5); at(e.x, e.z, 0.35, 'ping'); break;
       case 'splash': fx.splash(e.x, e.z, e.s); at(e.x, e.z, e.s > 1 ? 0.8 : 0.3, 'splash'); break;
       case 'leaves': fx.leaves(e.x, e.y, e.z, [0.4, 0.75, 0.3], e.n); if (e.canopy) fx.popText(e.x, e.y + 2, e.z, 'TREE SAVE!', 0.7, '#8fff7a'); break;
-      case 'bump': fx.impact(e.x, e.y, e.z, [0.8, 0.7, 0.5], 4); if (e.tree) fx.leaves(e.x, e.y + 3, e.z, [0.4, 0.75, 0.3], 6); at(e.x, e.z, 0.4, 'ram'); break;
+      case 'bump': fx.impact(e.x, e.y, e.z, [0.8, 0.7, 0.5], 4); if (e.tree) { fx.leaves(e.x, e.y + 3, e.z, [0.4, 0.75, 0.3], 6); this.world.shakeTree(e.i); } at(e.x, e.z, 0.4, 'ram'); break;
+      case 'apples': this.world.dropApples(e.i, e.n, e.r, e.bx, e.bz); break;
       case 'ram': fx.impact(e.x, e.y, e.z, [1, 0.8, 0.4], 12); at(e.x, e.z, 1, 'ram'); this.shakeAt(e.x, e.z, 0.4); break;
       case 'hit': {
         const t = this.tanks.get(e.id);
@@ -362,6 +364,7 @@ export class Client {
       }
       case 'restart':
         for (const o of this.world.obstacles) o.alive = true;
+        this.world.resetApples();
         break;
     }
   }

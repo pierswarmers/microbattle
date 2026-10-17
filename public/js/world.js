@@ -3,6 +3,7 @@
 import { Geo, T } from './geo.js';
 import { Mesh, hex } from './gl.js';
 import { m4, makeNoise, makeRng, clamp, lerp, smooth, alignToNormal } from './math.js';
+import { APPLES } from './models.js';
 
 export const WATER_LEVEL = -1.2;
 const GHOST_ALPHA = 0.2, GHOST_FADE_T = 0.25; // see-through props: final opacity and fade time (s)
@@ -488,8 +489,16 @@ export class World {
       const col = kind === 1 ? (this.season === 'winter' ? [0.9, 0.95, 0.95] : [1, 1, 1]) : foliage();
       const top = h + (kind === 1 ? 5.7 : 6.5) * s;
       // contact shadows for trees and giant mushrooms are drawn per frame so they fade with a ghosted prop
-      this.trees.push({ kind, x, z, s, top, col, br: (kind === 1 ? 2.2 : 2.6) * s, m: m4.compose(m4.create(), x, h - 0.1, z, yaw, 0, 0, s) });
-      if (solid) this.addObstacle({ x, z, r: 0.7 * s, top, kind: 'tree', cr: 2.4 * s, cb: h + 2.4 * s });
+      const t = { kind, x, z, s, top, col, br: (kind === 1 ? 2.2 : 2.6) * s, yaw, y: h - 0.1, shake: 0, m: m4.compose(m4.create(), x, h - 0.1, z, yaw, 0, 0, s) };
+      // fruit trees keep a count of hanging apples (on the obstacle, so the server can share it)
+      const apples = kind === 2 ? APPLES[this.season] || 0 : 0;
+      t.apples = apples;
+      this.trees.push(t);
+      if (solid) {
+        const o = this.addObstacle({ x, z, r: 0.7 * s, top, kind: 'tree', cr: 2.4 * s, cb: h + 2.4 * s });
+        o.tree = t; t.ob = o;
+        if (apples) o.apples = o.apples0 = apples;
+      }
     };
     place(Math.round(340 * dens), 1.4, {
       gap: 2.2,
@@ -818,9 +827,84 @@ export class World {
     return true;
   }
 
+  // ---------- apples knocked off fruit trees ----------
+  /** Wobble a tree that was bumped. */
+  shakeTree(i, k = 1) {
+    const o = this.obstacles[i];
+    if (o && o.tree) o.tree.shake = Math.max(o.tree.shake, k);
+  }
+
+  /**
+   * Apples `r .. r+n-1` of obstacle `i`'s tree fall off. The scatter is seeded from the event so every
+   * client drops them the same way; (bx, bz) is a blast pushing them outward, if any.
+   */
+  dropApples(i, n, r, bx, bz) {
+    const o = this.obstacles[i], t = o && o.tree;
+    if (!t) return;
+    o.apples = r;
+    const spots = this.M.appleSpots, rng = makeRng(i * 7919 + r * 131 + 17), p = [0, 0, 0, 0];
+    this.fallen = this.fallen || [];
+    for (let k = r; k < r + n && k < spots.length; k++) {
+      m4.transform(t.m, spots[k][0], spots[k][1], spots[k][2], 1, p);
+      let vx = (p[0] - t.x) * 0.9, vz = (p[2] - t.z) * 0.9;
+      if (bx !== undefined) { const dx = p[0] - bx, dz = p[2] - bz, d = Math.hypot(dx, dz) || 1; vx += (dx / d) * 4; vz += (dz / d) * 4; }
+      this.fallen.push({ x: p[0], y: p[1], z: p[2], vx: vx + (rng() - 0.5) * 2, vy: rng() * 2.5, vz: vz + (rng() - 0.5) * 2, s: t.s, yaw: rng() * 6.28, spin: 0, age: -rng() * 0.25, life: 22 + rng() * 6 });
+    }
+    t.shake = Math.max(t.shake, 0.7);
+    if (this.fallen.length > 160) this.fallen.splice(0, this.fallen.length - 160);
+  }
+
+  /** Back to full trees (round restart, or a welcome listing the trees already picked). */
+  resetApples(list = []) {
+    for (const o of this.obstacles) if (o.apples0) o.apples = o.apples0;
+    for (const [i, r] of list) if (this.obstacles[i]) this.obstacles[i].apples = r;
+    this.fallen = [];
+  }
+
+  updateApples(dt) {
+    for (const t of this.trees) if (t.shake > 0) t.shake = Math.max(0, t.shake - dt * 1.6);
+    if (!this.fallen) return;
+    const n = this._an || (this._an = [0, 1, 0]);
+    for (let i = this.fallen.length - 1; i >= 0; i--) {
+      const a = this.fallen[i];
+      a.age += dt;
+      if (a.age < 0) continue; // a short stagger so they don't all let go at once
+      if (a.age > a.life) { this.fallen.splice(i, 1); continue; }
+      const rad = 0.24 * a.s;
+      a.vy -= 20 * dt;
+      a.x += a.vx * dt; a.y += a.vy * dt; a.z += a.vz * dt;
+      const gh = this.heightAt(a.x, a.z);
+      if (gh < WATER_LEVEL) {
+        // apples float: bob on the surface and drift to a stop
+        if (a.y < WATER_LEVEL) { a.y = WATER_LEVEL; a.vy = Math.max(0, a.vy) * 0.2; const f = Math.exp(-1.2 * dt); a.vx *= f; a.vz *= f; }
+      } else if (a.y < gh + rad) {
+        a.y = gh + rad;
+        if (a.vy < -2) { a.vy *= -0.38; a.vx *= 0.8; a.vz *= 0.8; } else a.vy = 0;
+        // roll downhill, with rolling friction
+        this.normalAt(a.x, a.z, n);
+        a.vx += n[0] * 14 * dt; a.vz += n[2] * 14 * dt;
+        const f = Math.exp(-1.4 * dt); a.vx *= f; a.vz *= f;
+      }
+      // bounce off trunks, rocks and other solid props
+      this.query(a.x, a.z, rad, (o) => {
+        if (o.soft || o.hp !== undefined) return;
+        const dx = a.x - o.x, dz = a.z - o.z, d = Math.hypot(dx, dz) || 0.01, nx = dx / d, nz = dz / d;
+        const pen = o.r + rad - d;
+        if (pen <= 0 || a.y > o.top) return;
+        a.x += nx * pen; a.z += nz * pen;
+        const vn = a.vx * nx + a.vz * nz;
+        if (vn < 0) { a.vx -= 1.5 * vn * nx; a.vz -= 1.5 * vn * nz; }
+      });
+      const sp = Math.hypot(a.vx, a.vz);
+      a.spin += (sp / rad) * dt;
+      if (sp > 0.05) a.yaw = Math.atan2(a.vx, a.vz);
+    }
+  }
+
   // ---------- per-frame dynamic decoration ----------
   updateAmbient(dt, time) {
     const rng = this.rngC;
+    this.updateApples(dt);
     for (const d of this.ambient.ducks) d.a += d.sp * dt * (8 / d.r);
     for (const b of this.ambient.blades) b.a += dt * 0.6;
     for (const c of this.ambient.clouds) { c.x += c.sp * dt; if (c.x > this.half * 1.4) c.x = -this.half * 1.4; }
@@ -903,12 +987,26 @@ export class World {
     this.focus = focus;
     // props between the camera and a watched tank fade smoothly down to see-through
     const solid = [M.treeRound, M.treePine, M.treeFruit], ghost = [M.treeRoundG, M.treePineG, M.treeFruitG];
+    const spots = M.appleSpots, am = this._am || (this._am = m4.create()), lm = this._alm || (this._alm = m4.create());
     for (const t of this.trees) {
       const base = t.m[13] + (t.kind === 1 ? 1.2 : 2.0) * t.s;
       const a = this.fadeAlpha(t, this.occludes(occ, t.x, t.z, t.br * 0.95, base, t.top), dt);
-      if (a < 1) ghost[t.kind].add(t.m, t.col[0], t.col[1], t.col[2], a);
-      else solid[t.kind].add(t.m, t.col[0], t.col[1], t.col[2]);
+      // a bumped tree rocks on its base for a moment
+      let tm = t.m;
+      if (t.shake > 0) { const k = t.shake * t.shake; tm = m4.compose(this._sm || (this._sm = m4.create()), t.x, t.y, t.z, t.yaw, Math.sin(time * 27) * 0.06 * k, Math.cos(time * 21) * 0.045 * k, t.s); }
+      if (a < 1) ghost[t.kind].add(tm, t.col[0], t.col[1], t.col[2], a);
+      else solid[t.kind].add(tm, t.col[0], t.col[1], t.col[2]);
       this.blob(Bd, t.x, t.z, t.br, t.top - t.m[13], 0.04 + 0.18 * (a - GHOST_ALPHA) / (1 - GHOST_ALPHA));
+      const na = t.ob ? t.ob.apples || 0 : t.apples;
+      for (let k = 0; k < na && k < spots.length; k++) {
+        m4.compose(lm, spots[k][0], spots[k][1], spots[k][2], k * 2.1);
+        m4.multiply(am, tm, lm);
+        if (a < 1) M.appleG.add(am, 1, 1, 1, a); else M.apple.add(am);
+      }
+    }
+    if (this.fallen) for (const a of this.fallen) {
+      const fade = Math.min(1, (a.life - a.age) / 1.5), sc = a.s * fade;
+      M.apple.add(m4.compose(m, a.x, a.y, a.z, a.yaw, a.spin, 0, sc));
     }
     for (const t of this.mushrooms) {
       const a = this.fadeAlpha(t, this.occludes(occ, t.x, t.z, t.br, t.m[13] + 1.5 * t.s, t.top), dt);
