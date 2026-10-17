@@ -10,7 +10,8 @@ import { makeRng } from '../public/js/math.js';
 const rnd = makeRng(4242);
 
 const what = process.argv[2] || 'all';
-const runs = +(process.argv[process.argv.indexOf('--runs') + 1] || 6);
+const ri = process.argv.indexOf('--runs');
+const runs = ri > 0 ? +process.argv[ri + 1] || 6 : 6;
 const cfgBase = { seed: 11, scoreLimit: 0, timeLimit: 0, lobby: false, pickups: false, airdrop: 0, difficulty: 'hard', respawn: 3.5 };
 const world = new World(null, NULL_MODELS, resolveConfig(cfgBase)); // shared terrain, rebuilt obstacles per sim
 
@@ -33,8 +34,8 @@ function flatSpot(sim, need = 140) {
   return best;
 }
 
-function newSim(types) {
-  const sim = new Sim(resolveConfig({ ...cfgBase, bots: types.length, botTanks: types.join(',') }));
+function newSim(types, seed = cfgBase.seed) {
+  const sim = new Sim(resolveConfig({ ...cfgBase, seed, bots: types.length, botTanks: types.join(',') }));
   sim.startMatch([]);
   sim.countdown = 0.5; sim.step(DT);
   return sim;
@@ -110,7 +111,7 @@ if (what === 'duels' || what === 'all') {
 if (what === 'strike' || what === 'all') {
   const rows = [];
   for (const type of TANK_ORDER) {
-    let survived = 0, dmg = 0;
+    let survived = 0, dmg = 0, dist = 0;
     for (let r = 0; r < runs; r++) {
       const sim = newSim([type, 'scout']);
       sim.bots = [];
@@ -120,11 +121,16 @@ if (what === 'strike' || what === 'all') {
       b.x = x - 150; b.z = z;
       sim.strikes.push({ id: 999, x, z, r: WEAPONS.strike.radius, t: WEAPONS.strike.delay, owner: b, run: false });
       const hp0 = a.hp;
-      for (let k = 0; k < 8 / DT; k++) { a.input.throttle = 1; a.input.turn = 0; sim.step(DT); }
+      let d = 0;
+      for (let k = 0; k < 8 / DT; k++) {
+        a.input.throttle = 1; a.input.turn = 0; sim.step(DT);
+        if (!d && k * DT >= WEAPONS.strike.delay) d = Math.hypot(a.x - x, a.z - z); // bombs start landing
+      }
+      dist += d;
       if (a.alive) survived++;
       dmg += hp0 - Math.max(0, a.hp);
     }
-    rows.push({ vehicle: type, escaped: `${survived}/${runs}`, avgDamage: Math.round(dmg / runs) });
+    rows.push({ vehicle: type, escaped: `${survived}/${runs}`, avgDamage: Math.round(dmg / runs), distAtImpact: Math.round(dist / runs), zone: WEAPONS.strike.radius });
   }
   // and a tank that just sits in the middle
   let dead = 0, dm = 0;
@@ -143,7 +149,7 @@ if (what === 'strike' || what === 'all') {
 if (what === 'flame' || what === 'all') {
   let total = 0, n = 0;
   for (let r = 0; r < 60; r++) {
-    const sim = newSim(['scout', 'standard']); sim.bots = [];
+    const sim = newSim(['scout', 'standard'], 500 + r); sim.bots = [];
     const a = sim.tanks[0];
     a.wi = a.weapons.findIndex((w) => w.id === 'flame');
     a.weapons[a.wi].ammo = 9999;
