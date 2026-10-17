@@ -923,11 +923,18 @@ export class Client {
   }
 
   drawPickups() {
-    const M = this.M, m = this.m;
+    const M = this.M, m = this.m, me = this.me;
+    // health at full hp / ammo when topped up are refused by the server: show those greyed out, no beacon
+    const full = me && me.net.al ? { health: me.net.hp >= me.net.mhp, ammo: me.net.sm >= me.def.smoke && me.net.w.every(([id, a]) => a >= WEAPONS[id].maxAmmo) } : {};
     for (const p of this.pickups) {
       if (!p.active) continue;
       if (p.temp >= 0 && p.temp < 5 && Math.floor(p.spin * 6) % 2) continue;
       const y = p.y + 1.6 + Math.sin(p.spin * 2.2) * 0.35;
+      if (full[p.kind]) {
+        M[p.kind].add(m4.compose(m, p.x, p.y + 1.1, p.z, p.spin * 0.3, 0, 0, p.kind === 'ammo' ? 1.2 : 1), 0.45, 0.45, 0.45);
+        this.world.blob(M.blob, p.x, p.z, 1.1, 2, 0.15);
+        continue;
+      }
       let col;
       if (p.kind === 'health') { M.health.add(m4.compose(m, p.x, y, p.z, p.spin * 1.2, 0, 0, 1.2)); col = [1, 0.35, 0.35]; }
       else if (p.kind === 'ammo') { M.ammo.add(m4.compose(m, p.x, y, p.z, p.spin * 1.2, 0, 0, 1.5)); col = [1, 0.85, 0.3]; }
