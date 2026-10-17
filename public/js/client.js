@@ -322,9 +322,11 @@ export class Client {
         break;
       }
       case 'strikeRun': {
-        for (let i = -1; i <= 1; i += 2) this.jets.push({ x: e.x - e.dx * 130 + -e.dz * i * 10, z: e.z - e.dz * 130 + e.dx * i * 10, y: this.world.heightAt(e.x, e.z) + 22 + i * 1.5, dx: e.dx, dz: e.dz, age: 0 });
+        // same flight path the server releases the bombs from (WEAPONS.strike jet* fields)
+        const SW = WEAPONS.strike, y = this.world.heightAt(e.x, e.z) + SW.jetAlt;
+        for (const l of SW.jetLanes) this.jets.push({ x: e.x + e.dx * e.a0 - e.dz * l, z: e.z + e.dz * e.a0 + e.dx * l, y, dx: e.dx, dz: e.dz, age: 0 });
         this.sound.play('jet', Math.max(0.3, this.spatial(e.x, e.z)[0]));
-        this.later(1.1, () => fx.popText(e.x, this.world.heightAt(e.x, e.z) + 10, e.z, 'CARPET BOMB!', 1.8, '#ff5a3a', true));
+        this.later(Math.max(0, -e.a0 / SW.jetSpeed), () => fx.popText(e.x, this.world.heightAt(e.x, e.z) + 10, e.z, 'CARPET BOMB!', 1.8, '#ff5a3a', true));
         break;
       }
       case 'ignite': {
@@ -695,7 +697,7 @@ export class Client {
     // air strike target markers billow red smoke
     for (const s of this.strikes) if (s.t > 0 && Math.random() < dt * 12) fx.add({ k: 'puff', x: s.x + (Math.random() - 0.5), y: W.heightAt(s.x, s.z) + 0.5, z: s.z + (Math.random() - 0.5), vx: (Math.random() - 0.5), vy: 4 + Math.random() * 2, vz: (Math.random() - 0.5), drag: 0.3, life: 2.5, s0: 0.8, s1: 3.5, c0: [1, 0.25, 0.2], c1: [0.9, 0.6, 0.55], a: 0.85 });
     for (const j of this.jets) {
-      j.age += dt; j.x += j.dx * 110 * dt; j.z += j.dz * 110 * dt;
+      j.age += dt; j.x += j.dx * WEAPONS.strike.jetSpeed * dt; j.z += j.dz * WEAPONS.strike.jetSpeed * dt;
       // twin white contrails that linger
       for (const side of [-1, 1]) fx.add({ k: 'puff', x: j.x - j.dx * 7 - j.dz * side * 5, y: j.y - 0.4, z: j.z - j.dz * 7 + j.dx * side * 5, vx: 0, vy: 0, vz: 0, life: 2.2, s0: 0.5, s1: 1.6, c0: [1, 1, 1], c1: [0.95, 0.95, 0.95], a: 0.8 });
     }

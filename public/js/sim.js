@@ -561,7 +561,7 @@ export class Sim {
   /** Returns true when the projectile is consumed. */
   projectileHit(p) {
     const W = this.world;
-    if (!W.inBounds(p.x, p.z, -20)) return true;
+    if (!W.inBounds(p.x, p.z, -20) && p.kind !== 'bomb') return true; // bombs released off-map still fall onto it
     const big = p.kind === 'shell' && p.W.nuke;
     for (const t of this.tanks) {
       if (!t.alive || (t === p.owner && p.age < 0.4)) continue;
@@ -748,24 +748,28 @@ export class Sim {
   }
 
   updateStrikes(dt) {
+    const W = WEAPONS.strike;
     for (const s of this.strikes) {
       s.t -= dt;
-      // bombers arrive one second before impact; bombs take ~1s to fall
-      if (!s.run && s.t <= 1.05) {
+      // the jets cross the zone centre at s.t = jetCross; they appear jetLead metres out along their heading
+      if (!s.run && s.t <= W.jetCross + W.jetLead / W.jetSpeed) {
         s.run = true;
         const a = this.rng() * Math.PI * 2;
-        const dx = Math.cos(a), dz = Math.sin(a);
-        this.emit('strikeRun', { sid: s.id, x: r1(s.x), z: r1(s.z), dx: r2(dx), dz: r2(dz) });
-        const W = WEAPONS.strike;
+        const dx = Math.cos(a), dz = Math.sin(a), nx = -dz, nz = dx; // heading and its left-hand side
+        const a0 = -W.jetSpeed * (s.t - W.jetCross); // jets' distance along the heading from the centre right now
+        const relY = this.world.heightAt(s.x, s.z) + W.jetAlt - 1.2; // bomb bay, just under the jets
+        this.emit('strikeRun', { sid: s.id, x: r1(s.x), z: r1(s.z), dx: r2(dx), dz: r2(dz), a0: r1(a0) });
         for (let i = 0; i < W.bombs; i++) {
-          // uniform spread over the disc, dropped in a sweep along the bomber path
-          const rr = Math.pow(this.rng(), 0.7) * s.r, aa = this.rng() * Math.PI * 2; // a little denser in the middle
+          // uniform spread over the disc (a little denser in the middle), carpet-bombed along the flight path
+          const rr = Math.pow(this.rng(), 0.7) * s.r, aa = this.rng() * Math.PI * 2;
           const bx = s.x + Math.cos(aa) * rr, bz = s.z + Math.sin(aa) * rr;
-          const along = (bx - s.x) * dx + (bz - s.z) * dz; // -r..r
-          const delay = 0.05 + ((along + s.r) / (2 * s.r)) * 0.6;
-          this.later(delay, () => {
-            const gy = this.world.heightAt(bx, bz);
-            this.projectiles.push({ owner: s.owner, w: 'strike', W, kind: 'bomb', id: this.nextId++, age: 0, life: 6, x: bx - dx * 8, y: gy + 26, z: bz - dz * 8, vx: dx * 8, vy: -8, vz: dz * 8, g: 36, dmg: 0, splash: W.bombSplash, splashDmg: W.bombDmg });
+          const along = (bx - s.x) * dx + (bz - s.z) * dz, side = (bx - s.x) * nx + (bz - s.z) * nz;
+          const lane = W.jetLanes.reduce((b, l) => (Math.abs(l - side) < Math.abs(b - side) ? l : b));
+          // free fall from the bomb bay: released bombFwd*tf short of the impact point, the moment the jet is overhead
+          const tf = Math.sqrt((2 * Math.max(2, relY - this.world.heightAt(bx, bz))) / W.bombG);
+          const ra = along - W.bombFwd * tf, vs = (side - lane) / tf;
+          this.later(Math.max(0, (ra - a0) / W.jetSpeed), () => {
+            this.projectiles.push({ owner: s.owner, w: 'strike', W, kind: 'bomb', id: this.nextId++, age: 0, life: 6, x: s.x + dx * ra + nx * lane, y: relY, z: s.z + dz * ra + nz * lane, vx: dx * W.bombFwd + nx * vs, vy: 0, vz: dz * W.bombFwd + nz * vs, g: W.bombG, dmg: 0, splash: W.bombSplash, splashDmg: W.bombDmg });
           });
         }
       }

@@ -61,7 +61,11 @@ export const WEAPONS = {
   cluster: { id: 'cluster', name: 'Cluster', short: 'CLSTR', key: '5', kind: 'cluster', dmg: 18, splash: 3, splashDmg: 8, speed: 72, gravity: 18, reload: 3.0, maxAmmo: 4, start: 3, spread: 0.004, recoil: 0.6, shake: 0.25, bomblets: 12, bombletSplash: 4.5, bombletDmg: 16, burstHeight: 12, spreadR: 10, color: [1, 0.6, 0.9] },
   flame: { id: 'flame', name: 'Flamethrower', short: 'FLAME', key: '6', kind: 'flame', dmg: 3.0, speed: 32, reload: 0.045, maxAmmo: 200, start: 200, spread: 0.14, range: 20, burn: 2.5, burnDps: 8, recoil: 0, shake: 0.02, color: [1, 0.55, 0.1] },
   rapid: { id: 'rapid', name: 'Rapid Fire', short: 'RAPID', key: '7', kind: 'bullet', dmg: 4.6, speed: 150, gravity: 6, reload: 0.07, maxAmmo: 300, start: 300, spread: 0.012, bloom: 0.009, maxBloom: 0.1, recover: 0.3, kick: 0.012, range: 130, recoil: 0.06, shake: 0.03, color: [1, 1, 0.5] },
-  strike: { id: 'strike', name: 'Air Strike', short: 'STRIKE', key: '8', kind: 'strike', speed: 60, gravity: 20, launchPitch: 0.8, reload: 1, cooldown: 20, maxAmmo: 2, start: 1, radius: 34, delay: 5, bombs: 40, bombSplash: 9, bombDmg: 75, range: 220, minRange: 15, recoil: 0.2, shake: 0.1, color: [1, 0.2, 0.2] },
+  strike: { id: 'strike', name: 'Air Strike', short: 'STRIKE', key: '8', kind: 'strike', speed: 60, gravity: 20, launchPitch: 0.8, reload: 1, cooldown: 20, maxAmmo: 2, start: 1, radius: 34, delay: 5, bombs: 40, bombSplash: 9, bombDmg: 75,
+    // bomber run: jets fly lanes (side offsets) at jetAlt over the zone centre, crossing it `jetCross` s before the countdown ends;
+    // each bomb leaves the nearest jet's belly carrying bombFwd m/s of forward speed and fans out sideways to its impact point
+    jetSpeed: 110, jetAlt: 22, jetLead: 140, jetLanes: [-18, 0, 18], jetCross: 0.42, bombFwd: 28, bombG: 36,
+    range: 220, minRange: 15, recoil: 0.2, shake: 0.1, color: [1, 0.2, 0.2] },
 };
 export const WEAPON_ORDER = ['standard', 'highvel', 'seeker', 'massive', 'cluster', 'flame', 'rapid', 'strike'];
 
