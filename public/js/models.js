@@ -495,19 +495,23 @@ export function createModels(r, rng, season = 'summer') {
     };
   }
   M.terrain = null; // set by world
-  // trees are re-submitted each frame so ones hiding a tank can be drawn see-through in birds-eye view
+  // big props are re-submitted each frame so ones hiding a tank from the camera can fade to see-through
+  // "G" ghost twins: depth-prepassed, outlined, alpha-blended copies of the same geometry
   const tr = tree('round', rng, season), tp = tree('pine', rng, season), tf = tree('fruit', rng, season);
   M.treeRound = new Mesh(r, tr, { sway: 0.0035, capacity: 512 });
   M.treePine = new Mesh(r, tp, { sway: 0.0035, capacity: 512 });
   M.treeFruit = new Mesh(r, tf, { sway: 0.0035, capacity: 256 });
-  const ghost = { sway: 0.0035, capacity: 32, transparent: true, layer: 8 };
+  const ghost = { sway: 0.0035, capacity: 32, ghost: true, layer: 8 };
   M.treeRoundG = new Mesh(r, tr, ghost);
   M.treePineG = new Mesh(r, tp, ghost);
   M.treeFruitG = new Mesh(r, tf, ghost);
-  M.mushroomG = new Mesh(r, mushroom(rng), { capacity: 16, transparent: true, layer: 8 });
+  M.mushroomG = new Mesh(r, mushroom(rng), { capacity: 16, ghost: true, layer: 8 });
   M.bush = new Mesh(r, bush(rng, false, season), { capacity: 256 });
   M.bushBerry = new Mesh(r, bush(rng, season !== 'winter', season), { capacity: 256 });
-  M.rock = new Mesh(r, rock(rng, season), { static: true, capacity: 256 });
+  const rk = rock(rng, season);
+  M.rock = new Mesh(r, rk, { static: true, capacity: 256 });
+  M.boulder = new Mesh(r, rk, { capacity: 128 });
+  M.boulderG = new Mesh(r, rk, { capacity: 16, ghost: true, layer: 8 });
   M.mushroom = new Mesh(r, mushroom(rng), { capacity: 64 });
   M.toadstool = new Mesh(r, toadstool(rng), { static: true, capacity: 512, outlineMax: 0.05 });
   M.log = new Mesh(r, log(rng), { static: true, capacity: 64 });
@@ -518,8 +522,11 @@ export function createModels(r, rng, season = 'summer') {
   M.crate = new Mesh(r, crate(), { capacity: 64 });
   M.barrel = new Mesh(r, barrelMesh(), { capacity: 64 });
   M.hay = new Mesh(r, haybale(), { static: true, capacity: 64 });
-  M.house = new Mesh(r, house(rng), { static: true, capacity: 8 });
-  M.windmill = new Mesh(r, windmillTower(), { static: true, capacity: 4 });
+  const hs = house(rng), wm = windmillTower();
+  M.house = new Mesh(r, hs, { capacity: 8 });
+  M.houseG = new Mesh(r, hs, { capacity: 4, ghost: true, layer: 8 });
+  M.windmill = new Mesh(r, wm, { capacity: 4 });
+  M.windmillG = new Mesh(r, wm, { capacity: 4, ghost: true, layer: 8 });
   M.blades = new Mesh(r, windmillBlades(), { capacity: 4, cull: false });
   M.fence = new Mesh(r, fence(), { static: true, capacity: 128, outlineMax: 0.06 });
   M.clouds = [4, 6, 8].map((n) => new Mesh(r, cloud(rng, n), { capacity: 16, transparent: true, mode: 6, layer: 9 }));
