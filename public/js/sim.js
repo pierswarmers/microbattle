@@ -839,7 +839,9 @@ export class Sim {
       const W = WEAPONS[p.sub];
       let w = t.weapons.find((x) => x.id === p.sub);
       if (!w) { w = { id: p.sub, ammo: 0 }; t.weapons.push(w); }
-      if (w.ammo >= W.maxAmmo) return false;
+      // already full (e.g. Super Heavy spawns with its one MASSIVE, Artillery with full cluster/strike):
+      // never leave a box you can't take, swap it for a random power-up instead
+      if (w.ammo >= W.maxAmmo) return this.collect(t, { ...p, kind: 'power', sub: POWERUP_ORDER[Math.floor(this.rng() * POWERUP_ORDER.length)] });
       w.ammo = Math.min(W.maxAmmo, w.ammo + Math.max(1, Math.ceil(W.maxAmmo * 0.6)));
       label = '+' + W.name.toUpperCase();
     } else if (p.kind === 'power') {
