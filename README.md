@@ -68,7 +68,7 @@ Weapon crates and supply drops can add any weapon to any vehicle.
 |---|---|
 | Standard | The all-purpose shell. Every vehicle except the scout has it. |
 | High Velocity | Almost no arc and very fast. Heavy recoil and knockback, and few rounds. |
-| Heat Seeker | Fired on a high arc. If you lock on to a target in commander view, it dives onto them. Trees and smoke protect the target. |
+| Heat Seeker | Fired on a high arc. If you lock on to a target in commander view, it dives onto them. In bird's-eye view, hold tanks inside the dashed circle for about a second to lock each one; firing then launches one seeker per locked tank (ammo permitting). Trees and smoke protect the target. |
 | MASSIVE | One shell, with a mushroom cloud that flattens everything nearby. |
 | Cluster | Bursts just before it lands and scatters a ring of 12 bomblets. |
 | Flamethrower | Very powerful at close range. Heat builds while you fire, and too much heat can set your own fuel on fire. |

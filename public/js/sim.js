@@ -98,7 +98,7 @@ export class Sim {
       kills: 0, deaths: 0, score: 0, streak: 0, lastKillT: -10, lives: this.cfg.lives,
       lastHitBy: null, lastHitT: -10, n: [0, 1, 0], radius: def.radius, scale: def.scale, ramT: 0,
       hullM: m4.create(), turretM: m4.create(), barrelM: m4.create(), muzzle: [0, 0, 0], dir: [0, 0, 1],
-      input: { throttle: 0, turn: 0, aimYaw: 0, aimPitch: 0.05, aimDist: 60, fire: false, weapon: null, lock: -1, smoke: 0 },
+      input: { throttle: 0, turn: 0, aimYaw: 0, aimPitch: 0.05, aimDist: 60, fire: false, weapon: null, lock: -1, locks: [], smoke: 0 },
       stats: { shots: 0, hits: 0, dmg: 0, pickups: 0, byWeapon: {} }, nextType: null,
     };
   }
@@ -109,6 +109,7 @@ export class Sim {
   }
 
   spawnTank(t, initial = false) {
+    t.salvo = null;
     if (t.nextType) { this.setType(t, t.nextType); t.nextType = null; }
     const sp = this.world.spawns;
     let best = sp[t.slot % sp.length];
@@ -157,7 +158,7 @@ export class Sim {
       const wasBot = !t.human;
       this.bots = this.bots.filter((b) => b.t !== t);
       t.human = true; t.name = name;
-      t.input = { ...t.input, throttle: 0, turn: 0, fire: false, lock: -1, aimYaw: t.turretYaw, aimPitch: t.pitch };
+      t.input = { ...t.input, throttle: 0, turn: 0, fire: false, lock: -1, locks: [], aimYaw: t.turretYaw, aimPitch: t.pitch };
       if (wasBot && t.def.id !== type) {
         // the player's vehicle replaces the bot's in place: same spot, same health fraction, fresh loadout
         const frac = t.alive ? t.hp / t.maxHp : 1;
@@ -278,7 +279,53 @@ export class Sim {
     } else t.heat = Math.max(0, t.heat - FLAME_HEAT.cool * dt);
     // rapid-fire spread only settles once you stop shooting
     if (!(c.fire && W0.kind === 'bullet')) t.bloom = Math.max(0, t.bloom - WEAPONS.rapid.recover * dt);
-    if (c.fire) this.fire(t, c);
+    if (t.salvo) this.updateSalvo(t, dt);
+    else if (c.fire) this.fire(t, c);
+  }
+
+  /** Bird's-eye multi-lock salvo: the rest of the seekers leave the pod one after another. */
+  updateSalvo(t, dt) {
+    t.salvoT -= dt;
+    if (t.salvoT > 0) return;
+    const { w, targets } = t.salvo;
+    const e = targets.shift();
+    if (w.ammo > 0) {
+      w.ammo--;
+      t.stats.shots++;
+      t.stats.byWeapon[w.id].shots++;
+      const p = this.seekerShot(t, w, Math.hypot(e.x - t.x, e.z - t.z), Math.atan2(e.x - t.x, e.z - t.z));
+      if (this.lockValid(t, e, Math.PI) && this.los(t, e)) { p.target = e; this.emit('locked', { id: t.id, target: e.id }); }
+      this.projectiles.push(p);
+      this.emit('fire', { id: t.id, w: w.id });
+    }
+    t.salvoT = WEAPONS.seeker.salvoGap;
+    if (!targets.length || w.ammo <= 0) { t.salvo = null; t.cooldown = Math.max(t.cooldown, WEAPONS.seeker.reload); }
+  }
+
+  /** Bird's-eye locks the client claims, re-checked here: alive, in range, near the aimed circle, visible, not in smoke. */
+  multiLocks(t, c) {
+    const S = WEAPONS.seeker;
+    if (!Array.isArray(c.locks) || !c.locks.length) return [];
+    const ax = t.x + Math.sin(c.aimYaw) * c.aimDist, az = t.z + Math.cos(c.aimYaw) * c.aimDist;
+    const out = [];
+    for (const id of c.locks) {
+      const e = this.tankById(id);
+      if (!e || out.includes(e)) continue;
+      if (Math.hypot(e.x - ax, e.z - az) > S.lockRadius * 1.8) continue; // grace for latency and movement
+      if (this.lockValid(t, e, Math.PI) && this.los(t, e)) out.push(e);
+    }
+    return out;
+  }
+
+  /** A heat seeker launched steeply along `yaw`, its speed chosen so the arc lands at `dist`. */
+  seekerShot(t, w, dist, yaw) {
+    const W = WEAPONS[w.id];
+    const dmgMul = t.power.damage > 0 ? 2 : 1;
+    const [mx, my, mz] = t.muzzle;
+    const v = seekerSpeed(clamp(dist, W.minRange || 15, W.range), W.gravity, W.launchPitch);
+    const dd = dirFromYawPitch(yaw, W.launchPitch);
+    return { owner: t, w: w.id, W, x: mx, y: my, z: mz, age: 0, id: this.nextId++, dmg: W.dmg * dmgMul, splash: W.splash || 0, splashDmg: (W.splashDmg || 0) * dmgMul,
+      kind: 'seeker', vx: dd[0] * v, vy: dd[1] * v, vz: dd[2] * v, g: W.gravity, life: 12 };
   }
 
   /** Flamethrower mishap: the fuel tank catches fire. */
@@ -334,6 +381,7 @@ export class Sim {
     t.strikeCd = Math.max(0, t.strikeCd - dt);
     for (const k in t.power) if (t.power[k] > 0) { t.power[k] -= dt; if (t.power[k] <= 0) { t.power[k] = 0; if (k === 'shield') t.shieldHp = 0; } }
     if (!t.alive) {
+      t.salvo = null;
       if (!t.eliminated && this.state !== 'over') { t.respawnT -= dt; if (t.respawnT <= 0) this.spawnTank(t); }
       return;
     }
@@ -472,8 +520,17 @@ export class Sim {
       const dd = dirFromYawPitch(t.turretYaw, W.launchPitch);
       p = { ...base, kind: W.kind === 'seeker' ? 'seeker' : 'flare', vx: dd[0] * v, vy: dd[1] * v, vz: dd[2] * v, g: W.gravity, life: 12 };
       if (W.kind === 'seeker') {
-        const lt = c.lock >= 0 ? this.tankById(c.lock) : null;
-        if (lt && this.lockValid(t, lt, 0.35)) { p.target = lt; this.emit('locked', { id: t.id, target: lt.id }); }
+        const multi = this.multiLocks(t, c);
+        if (multi.length) {
+          // bird's-eye multi-lock: one seeker per locked tank, the first now and the rest in a quick ripple
+          const e = multi[0];
+          p = this.seekerShot(t, w, Math.hypot(e.x - t.x, e.z - t.z), Math.atan2(e.x - t.x, e.z - t.z));
+          p.target = e; this.emit('locked', { id: t.id, target: e.id });
+          if (multi.length > 1 && w.ammo > 0) { t.salvo = { w, targets: multi.slice(1, 1 + w.ammo) }; t.salvoT = W.salvoGap; }
+        } else {
+          const lt = c.lock >= 0 ? this.tankById(c.lock) : null;
+          if (lt && this.lockValid(t, lt, 0.35)) { p.target = lt; this.emit('locked', { id: t.id, target: lt.id }); }
+        }
       } else t.strikeCd = W.cooldown;
     } else {
       const v = shotSpeed(t.def, w.id);

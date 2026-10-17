@@ -110,6 +110,7 @@ export class Room {
         I.throttle = clampN(m.th, -1, 1); I.turn = clampN(m.tu, -1, 1);
         I.aimYaw = num(m.ay); I.aimPitch = num(m.ap); I.aimDist = clampN(m.ad, 0, 400);
         I.fire = !!m.f; I.weapon = typeof m.w === 'string' ? m.w : null; I.lock = Number.isInteger(m.lk) ? m.lk : -1;
+        I.locks = Array.isArray(m.lks) ? m.lks.filter(Number.isInteger).slice(0, 8) : [];
         if (Number.isInteger(m.sm) && m.sm > I.smoke) I.smoke = m.sm;
         break;
       }

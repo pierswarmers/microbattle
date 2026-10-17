@@ -47,7 +47,7 @@ export const TANK_ORDER = ['scout', 'standard', 'artillery', 'superheavy'];
  * kind:
  *  shell   - ballistic round (standard, high velocity, massive)
  *  bullet  - rapid fire: shallow arc, spread blooms with sustained fire
- *  seeker  - launched steeply; homes on a commander lock during descent; trees intercept it
+ *  seeker  - launched steeply; homes on a commander lock (or bird's-eye multi-lock salvo) during descent; trees intercept it
  *  cluster - shell that bursts above the ground into bomblets
  *  flame   - short-range fire stream; builds heat that can ignite your own tank
  *  strike  - flare that marks a target; a bomber run hits the zone `delay` seconds later
@@ -56,7 +56,7 @@ export const TANK_ORDER = ['scout', 'standard', 'artillery', 'superheavy'];
 export const WEAPONS = {
   standard: { id: 'standard', name: 'Standard', short: 'STD', key: '1', kind: 'shell', dmg: 24, splash: 3.5, splashDmg: 10, speed: 100, gravity: 14, reload: 1.1, maxAmmo: 40, start: 40, spread: 0.006, recoil: 0.5, shake: 0.2, color: [1, 0.9, 0.5] },
   highvel: { id: 'highvel', name: 'High Velocity', short: 'HV', key: '2', kind: 'shell', hv: true, dmg: 52, splash: 2.5, splashDmg: 12, speed: 290, gravity: 3, reload: 2.8, maxAmmo: 10, start: 8, spread: 0.001, recoil: 1.0, shake: 0.55, knock: 9, selfKnock: 5, color: [0.7, 0.95, 1] },
-  seeker: { id: 'seeker', name: 'Heat Seeker', short: 'SEEK', key: '3', kind: 'seeker', dmg: 44, splash: 5, splashDmg: 18, speed: 48, gravity: 18, launchPitch: 1.0, homing: 5, reload: 2.2, maxAmmo: 6, start: 5, lockTime: 0.5, range: 200, minRange: 22, recoil: 0.3, shake: 0.15, color: [1, 0.5, 0.2] },
+  seeker: { id: 'seeker', name: 'Heat Seeker', short: 'SEEK', key: '3', kind: 'seeker', dmg: 44, splash: 5, splashDmg: 18, speed: 48, gravity: 18, launchPitch: 1.0, homing: 5, reload: 2.2, maxAmmo: 6, start: 5, lockTime: 0.5, multiLockTime: 0.9, lockRadius: 16, salvoGap: 0.22, range: 200, minRange: 22, recoil: 0.3, shake: 0.15, color: [1, 0.5, 0.2] },
   massive: { id: 'massive', name: 'MASSIVE', short: 'NUKE', key: '4', kind: 'shell', nuke: true, dmg: 130, splash: 22, splashDmg: 110, speed: 62, gravity: 16, reload: 6, maxAmmo: 1, start: 1, spread: 0.004, recoil: 1.2, shake: 0.6, size: 2.2, color: [1, 0.85, 0.2] },
   cluster: { id: 'cluster', name: 'Cluster', short: 'CLSTR', key: '5', kind: 'cluster', dmg: 18, splash: 3, splashDmg: 8, speed: 72, gravity: 18, reload: 3.0, maxAmmo: 4, start: 3, spread: 0.004, recoil: 0.6, shake: 0.25, bomblets: 12, bombletSplash: 4.5, bombletDmg: 16, burstHeight: 12, spreadR: 10, color: [1, 0.6, 0.9] },
   flame: { id: 'flame', name: 'Flamethrower', short: 'FLAME', key: '6', kind: 'flame', dmg: 3.0, speed: 32, reload: 0.045, maxAmmo: 200, start: 200, spread: 0.14, range: 20, burn: 2.5, burnDps: 8, recoil: 0, shake: 0.02, color: [1, 0.55, 0.1] },
