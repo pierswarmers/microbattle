@@ -4,6 +4,8 @@ import { Sim, DT } from '../public/js/sim.js';
 import { TANK_ORDER } from '../public/js/defs.js';
 
 const SNAP_EVERY = 2; // steps per snapshot (60 Hz sim -> 30 Hz network)
+const INTERMISSION = 20; // seconds between rounds to view results and re-pick vehicles
+const MIN_RESULTS = 3; // results stay up at least this long even if everyone is ready
 let nextClientId = 1;
 
 export class Room {
@@ -90,7 +92,8 @@ export class Room {
         if (c.slot < 0) return;
         if (TANK_ORDER.includes(m.type)) {
           c.type = m.type;
-          const t = this.sim.tankById(c.slot);
+          // between rounds the pick is used when the next round spawns (start() reads c.type)
+          const t = this.sim.state === 'over' ? null : this.sim.tankById(c.slot);
           if (t && t.human) { if (t.alive) t.nextType = m.type; else this.sim.setType(t, m.type); }
         }
         if (typeof m.ready === 'boolean') c.ready = m.ready;
@@ -127,8 +130,12 @@ export class Room {
   humans() { return [...this.clients.values()].filter((c) => c.hello && c.slot >= 0); }
 
   maybeAutoStart() {
-    if (this.sim.state !== 'lobby') return;
     const hs = this.humans();
+    if (this.sim.state === 'over') {
+      if (this.overT > MIN_RESULTS && hs.length && hs.every((c) => c.ready)) this.restart();
+      return;
+    }
+    if (this.sim.state !== 'lobby') return;
     if (this.cfg.players > 0 && hs.length >= this.cfg.players) this.start();
     else if (hs.length > 0 && hs.every((c) => c.ready)) this.start();
   }
@@ -153,7 +160,11 @@ export class Room {
       if (this.lobbyT <= 0) this.start();
     }
     sim.step(DT);
-    if (sim.state === 'over') { this.overT += DT; if (this.overT > 12) this.restart(); }
+    if (sim.state === 'over') {
+      if (this.overT === 0) { for (const c of this.clients.values()) c.ready = false; this.broadcastLobby(); } // ready up again for the next round
+      this.overT += DT;
+      if (this.overT > INTERMISSION) this.restart(); else this.maybeAutoStart();
+    }
     this.stepN++;
     if (this.stepN % SNAP_EVERY === 0) this.broadcastSnapshot();
   }
@@ -163,6 +174,7 @@ export class Room {
     snap.t = 'snap';
     snap.ev = this.sim.drainEvents();
     snap.lt = this.cfg.lobbyTimeout > 0 && this.sim.state === 'lobby' ? Math.max(0, Math.round(this.lobbyT)) : -1;
+    if (this.sim.state === 'over') snap.it = Math.max(0, Math.ceil(INTERMISSION - this.overT)); // intermission countdown
     const msg = JSON.stringify(snap);
     // slow clients just miss a snapshot rather than buffering without limit
     for (const c of this.clients.values()) if (c.hello && !c.ws.congested) c.ws.send(msg);

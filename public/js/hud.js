@@ -518,11 +518,12 @@ export class HUD {
       ctx.fillStyle = c.c; ctx.fillRect(-c.s / 2, -c.s / 4, c.s, c.s / 2);
       ctx.restore();
     }
-    ctx.save(); ctx.translate(W / 2, H * 0.2);
+    const ty0 = H * 0.12;
+    ctx.save(); ctx.translate(W / 2, ty0);
     const sc = 0.6 + 0.4 * k + Math.sin(g.realTime * 3) * 0.03; ctx.scale(sc, sc);
     this.label(0, 0, w ? `${w.net.name.replace(' (bot)', '')} WINS!` : 'DRAW!', 78, w ? w.css : '#fff', 'center', 'middle', COMIC, '#2a1033');
     ctx.restore();
-    this.label(W / 2, H * 0.2 + 56, s.why || '', 16, '#fff', 'center');
+    this.label(W / 2, ty0 + 52, s.why || '', 16, '#fff', 'center');
     const rows = [...g.tanks.values()].sort((a, b) => b.net.s - a.net.s || a.net.d - b.net.d);
     const tx = W / 2 - 220, ty = H - 80 - rows.length * 34;
     this.roundRect(tx - 10, ty - 30, 460, 40 + rows.length * 34, 14, 'rgba(15,20,35,0.75)');
@@ -534,7 +535,13 @@ export class HUD {
       this.label(tx + 320, y, String(t.net.k), 14, '#fff', 'left');
       this.label(tx + 380, y, String(t.net.d), 14, '#fff', 'left');
     });
-    if ((g.overT || 0) > 2) this.label(W / 2, H * 0.2 + 84, 'Next battle starts soon · ENTER to start now', 16, '#ffdd33', 'center');
+    // intermission: everyone can pick (or change) their vehicle for the next round
+    const y0 = ty0 + 80, ch = 180;
+    this.seatCards(W, y0, ch, true);
+    const blink = Math.floor(g.realTime * 2.5) % 2 === 0;
+    const secs = s.it >= 0 ? ` in ${s.it}s` : ' soon';
+    this.label(W / 2, y0 + ch + 26, g.you >= 0 ? '←/→ choose vehicle for the next round · SPACE ready · ENTER start now' : 'You are spectating', 18, blink ? '#ffdd33' : '#fff', 'center', 'middle', COMIC);
+    this.label(W / 2, y0 + ch + 50, `Next round starts${secs}, or when everyone is ready.`, 13, '#dde', 'center');
   }
 
   // ---------- network lobby ----------
@@ -558,8 +565,19 @@ export class HUD {
     const modeTxt = cfg.mode === 'any' ? 'any view (C to switch)' : (VIEW_NAMES[cfg.mode] || '') + ' view';
     this.label(W / 2, H * 0.12 + 62, `NETWORK BATTLE · ${modeTxt} · first to ${cfg.scoreLimit} · ${cfg.difficulty} bots`, 15, '#fff', 'center');
     this.label(W / 2, H * 0.12 + 86, `Friends join by opening this page from your machine's network address (port ${location.port || 80})`, 13, '#cfe', 'center');
-    const cw = Math.min(250, (W - 80) / 4), ch = 290, gap = 16;
-    const x0 = W / 2 - (cw * 4 + gap * 3) / 2, y0 = H * 0.3;
+    const ch = 290, y0 = H * 0.3;
+    this.seatCards(W, y0, ch, false);
+    const blink = Math.floor(t * 2.5) % 2 === 0;
+    this.label(W / 2, y0 + ch + 40, g.you >= 0 ? '←/→ choose vehicle · SPACE ready · ENTER start now · N rename' : 'The battle is full — you are spectating', 18, blink ? '#ffdd33' : '#fff', 'center', 'middle', COMIC);
+    this.label(W / 2, y0 + ch + 70, 'Starts when everyone is ready (or anyone presses ENTER). Empty seats are bots.', 13, '#dde', 'center');
+    if (g.snap && g.snap.lt >= 0) this.label(W / 2, y0 + ch + 92, `auto-start in ${g.snap.lt}s`, 13, '#ccd', 'center');
+  }
+
+  /** One card per seat: name, vehicle (with ◀ ▶ on your own), loadout and ready state. Compact for the intermission. */
+  seatCards(W, y0, ch, compact) {
+    const g = this.g, t = g.realTime;
+    const cw = Math.min(250, (W - 80) / 4), gap = 16;
+    const x0 = W / 2 - (cw * 4 + gap * 3) / 2;
     for (let i = 0; i < 4; i++) {
       const p = g.lobby.players.find((q) => q.slot === i);
       const mine = i === g.you;
@@ -570,16 +588,21 @@ export class HUD {
       this.roundRect(cx, y0 + bob, cw, 40, 18, col.css);
       this.label(cx + cw / 2, y0 + bob + 21, mine ? 'YOU' : `SEAT ${i + 1}`, 20, '#fff', 'center', 'middle', COMIC, 'rgba(0,0,0,0.4)');
       if (!p) {
-        this.label(cx + cw / 2, y0 + 120, 'BOT', 42, 'rgba(255,255,255,0.35)', 'center', 'middle', COMIC);
-        this.label(cx + cw / 2, y0 + 180, 'open seat', 13, '#ccd', 'center');
-        this.label(cx + cw / 2, y0 + 200, 'a bot drives until someone joins', 11, '#99a', 'center');
+        this.label(cx + cw / 2, y0 + ch * 0.41, 'BOT', compact ? 32 : 42, 'rgba(255,255,255,0.35)', 'center', 'middle', COMIC);
+        this.label(cx + cw / 2, y0 + ch * 0.62, compact ? 'picks a random vehicle' : 'open seat', 13, '#ccd', 'center');
+        if (!compact) this.label(cx + cw / 2, y0 + 200, 'a bot drives until someone joins', 11, '#99a', 'center');
         continue;
       }
       const def = TANK_TYPES[mine ? g.type : p.type];
       this.label(cx + cw / 2, y0 + bob + 60, p.name, 16, '#fff', 'center');
       if (mine) { this.label(cx + 16, y0 + bob + 92, '◀', 22, '#fff', 'left'); this.label(cx + cw - 16, y0 + bob + 92, '▶', 22, '#fff', 'right'); }
-      this.label(cx + cw / 2, y0 + bob + 92, def.name.toUpperCase(), 26, col.css, 'center', 'middle', COMIC);
+      this.label(cx + cw / 2, y0 + bob + 92, def.name.toUpperCase(), def.name.length > 9 ? 21 : 26, col.css, 'center', 'middle', COMIC);
       this.label(cx + cw / 2, y0 + bob + 116, def.blurb, 11, '#cde', 'center', 'middle', FONT, null);
+      if (compact) {
+        this.label(cx + cw / 2, y0 + bob + 140, def.weapons.map((w) => WEAPONS[w].short).join(' · '), 11, '#ffe08a', 'center');
+        this.label(cx + cw / 2, y0 + bob + ch - 22, p.ready ? '✔ READY' : 'not ready', 16, p.ready ? '#7dff8a' : '#99a', 'center');
+        continue;
+      }
       const stats = [['SPEED', def.speed / 24], ['ARMOR', def.hp / def.armor / 270], ['TURRET', def.turret / 4], ['ELEVATION', def.pitchMax / 1.3]];
       stats.forEach(([n, val], k) => {
         const yy = y0 + bob + 142 + k * 20;
@@ -589,10 +612,6 @@ export class HUD {
       this.label(cx + cw / 2, y0 + bob + 232, def.weapons.map((w) => WEAPONS[w].short).join(' · '), 11, '#ffe08a', 'center');
       this.label(cx + cw / 2, y0 + bob + 262, p.ready ? '✔ READY' : 'not ready', 16, p.ready ? '#7dff8a' : '#99a', 'center');
     }
-    const blink = Math.floor(t * 2.5) % 2 === 0;
-    this.label(W / 2, y0 + ch + 40, g.you >= 0 ? '←/→ choose vehicle · SPACE ready · ENTER start now · N rename' : 'The battle is full — you are spectating', 18, blink ? '#ffdd33' : '#fff', 'center', 'middle', COMIC);
-    this.label(W / 2, y0 + ch + 70, 'Starts when everyone is ready (or anyone presses ENTER). Empty seats are bots.', 13, '#dde', 'center');
-    if (g.snap && g.snap.lt >= 0) this.label(W / 2, y0 + ch + 92, `auto-start in ${g.snap.lt}s`, 13, '#ccd', 'center');
   }
 }
 
