@@ -3,6 +3,7 @@
 // Bots drive their tank through the same input record network players send.
 import { WEAPONS, shotSpeed, shotGravity } from './defs.js';
 import { wrapAngle, clamp } from './math.js';
+import { crossesLogs } from './world.js';
 
 const DIFFICULTY = {
   easy: { aimErr: 0.11, react: 0.9, lead: 0.3, turretMul: 0.6, sense: 100, fireTol: 1.6, lockMul: 2.2, smoke: 0.3 },
@@ -169,9 +170,10 @@ export class Bot {
       this.pathT -= dt;
       const goalMoved = !this.pathGoal || Math.hypot(this.pathGoal[0] - goal[0], this.pathGoal[1] - goal[1]) > 8;
       if (!this.path || this.pathT <= 0 || goalMoved) {
-        if (g.world.navLineClear(t.x, t.z, goal[0], goal[1])) this.path = [goal];
+        const scout = !crossesLogs(t.def);
+        if (g.world.navLineClear(t.x, t.z, goal[0], goal[1], scout)) this.path = [goal];
         else {
-          this.path = g.world.findPath(t.x, t.z, goal[0], goal[1], 12000);
+          this.path = g.world.findPath(t.x, t.z, goal[0], goal[1], 12000, scout);
           if (!this.path) {
             if (this.goalPickup) this.goalPickup.unreachable = g.time + 20;
             this.goal = null; this.wanderT = 0; this.goalKind = 'wander';
@@ -298,7 +300,8 @@ export class Bot {
       const x = t.x + Math.sin(yaw + a) * L, z = t.z + Math.cos(yaw + a) * L;
       if (w.isWater(x, z) || !w.inBounds(x, z, 2)) return 1;
       let hit = 0;
-      w.query(x, z, t.radius * 0.9, (o) => { if (!o.soft) { hit = 1; return false; } });
+      const logs = crossesLogs(t.def);
+      w.query(x, z, t.radius * 0.9, (o) => { if (!o.soft && !(o.log && logs)) { hit = 1; return false; } });
       return hit;
     };
     const l = probe(0.45), r = probe(-0.45), c = probe(0);
