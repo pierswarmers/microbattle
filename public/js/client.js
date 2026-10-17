@@ -2,7 +2,7 @@
 // local turret for responsive aiming, renders three camera modes and turns server events into effects.
 import { Renderer } from './gl.js';
 import { createModels } from './models.js';
-import { World, WATER_LEVEL } from './world.js';
+import { World, WATER_LEVEL, crossesLogs } from './world.js';
 import { FX } from './fx.js';
 import { Sound } from './audio.js';
 import { Input } from './input.js';
@@ -197,7 +197,13 @@ export class Client {
     let h = this.hull;
     if (!h || Math.hypot(h.x - sx, h.z - sz) > 6) h = this.hull = { x: sx, z: sz, yaw: e.yaw, speed: e.spd };
     const sp = e.pw && e.pw.speed ? 1.55 : 1;
-    const target = c.throttle > 0 ? c.throttle * def.speed * sp : c.throttle * def.reverse * sp;
+    const W = this.world, lg = crossesLogs(def);
+    let target = c.throttle > 0 ? c.throttle * def.speed * sp : c.throttle * def.reverse * sp;
+    // same slope + log-bump slowdown as the server
+    const L = 1.8 * t.scale, fx = Math.sin(h.yaw), fz = Math.cos(h.yaw);
+    const slope = (W.groundAt(h.x + fx * L, h.z + fz * L, lg) - W.groundAt(h.x - fx * L, h.z - fz * L, lg)) / (2 * L);
+    target *= 1 - clamp(slope * Math.sign(target || 1) * 1.2, -0.25, 0.65);
+    if (lg && W.groundAt(h.x, h.z, true) > W.heightAt(h.x, h.z) + 0.15) target *= 0.8;
     const accel = (Math.sign(target) !== Math.sign(h.speed) && Math.abs(h.speed) > 0.5 ? 2.2 : 1) * def.accel * (c.throttle === 0 ? 0.8 : 1);
     h.speed += clamp(target - h.speed, -accel * dt, accel * dt);
     const turnMul = 1 - Math.min(Math.abs(h.speed) / (def.speed * 2.5), 0.3);
@@ -211,7 +217,10 @@ export class Client {
     // if the server says we're actually stopped (rock, tank, water), stop predicting motion quickly
     const real = Math.hypot(e.vx, e.vz) * Math.sign(h.speed || 1);
     h.speed += (real - h.speed) * Math.min(1, dt * (Math.abs(real - h.speed) > 4 ? 8 : 1));
-    return { x: h.x, y: lerp(t.y ?? e.y, this.world.heightAt(h.x, h.z), Math.min(1, dt * 12)), z: h.z, yaw: h.yaw, ty: e.ty, p: e.p };
+    // ride height: same four-point ground follow as the server, so the hull climbs over logs without popping
+    const rx = Math.cos(h.yaw), rz = -Math.sin(h.yaw), Lh = 1.7 * t.scale, Wd = 1.1 * t.scale;
+    const gy = Math.max((W.groundAt(h.x + fx * Lh, h.z + fz * Lh, lg) + W.groundAt(h.x - fx * Lh, h.z - fz * Lh, lg) + W.groundAt(h.x + rx * Wd, h.z + rz * Wd, lg) + W.groundAt(h.x - rx * Wd, h.z - rz * Wd, lg)) / 4, W.groundAt(h.x, h.z, lg));
+    return { x: h.x, y: lerp(t.y ?? e.y, gy, Math.min(1, dt * 12)), z: h.z, yaw: h.yaw, ty: e.ty, p: e.p };
   }
 
   // ---------------- events → effects ----------------
@@ -685,8 +694,9 @@ export class Client {
       // terrain normal (same maths as the server)
       const fxv = Math.sin(t.yaw), fzv = Math.cos(t.yaw), rx = Math.cos(t.yaw), rz = -Math.sin(t.yaw);
       const L = 1.7 * t.scale, Wd = 1.1 * t.scale;
-      const hF = W.heightAt(t.x + fxv * L, t.z + fzv * L), hB = W.heightAt(t.x - fxv * L, t.z - fzv * L);
-      const hR = W.heightAt(t.x + rx * Wd, t.z + rz * Wd), hL = W.heightAt(t.x - rx * Wd, t.z - rz * Wd);
+      const lg = crossesLogs(t.def);
+      const hF = W.groundAt(t.x + fxv * L, t.z + fzv * L, lg), hB = W.groundAt(t.x - fxv * L, t.z - fzv * L, lg);
+      const hR = W.groundAt(t.x + rx * Wd, t.z + rz * Wd, lg), hL = W.groundAt(t.x - rx * Wd, t.z - rz * Wd, lg);
       const df = (hF - hB) / (2 * L) - t.rock * 0.08, dr = (hR - hL) / (2 * Wd);
       const n0 = -df * fxv - dr * rx, n2 = -df * fzv - dr * rz, nl = Math.hypot(n0, 1, n2);
       t.n[0] = n0 / nl; t.n[1] = 1 / nl; t.n[2] = n2 / nl;

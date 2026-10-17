@@ -1,7 +1,7 @@
 // Authoritative game simulation. Runs on the server (and headless in the balance harness):
 // tanks, physics, weapons, pickups, air strikes, smoke, bots and match rules. No rendering, audio or input.
 // Everything clients need to show effects is emitted as events, drained by the server each snapshot.
-import { World, WATER_LEVEL } from './world.js';
+import { World, WATER_LEVEL, crossesLogs } from './world.js';
 import { Bot, ballisticPitch, seekerSpeed } from './ai.js';
 import {
   TANK_TYPES, TANK_ORDER, TANK_GEOM, WEAPONS, POWERUPS, POWERUP_ORDER, PICKUP_KINDS, CRATE_WEAPONS,
@@ -255,9 +255,11 @@ export class Sim {
     const fx = Math.sin(t.yaw), fz = Math.cos(t.yaw);
     const L = 1.8 * t.scale;
     const W = this.world;
-    const slope = (W.heightAt(t.x + fx * L, t.z + fz * L) - W.heightAt(t.x - fx * L, t.z - fz * L)) / (2 * L);
+    const lg = crossesLogs(def);
+    const slope = (W.groundAt(t.x + fx * L, t.z + fz * L, lg) - W.groundAt(t.x - fx * L, t.z - fz * L, lg)) / (2 * L);
     let target = c.throttle > 0 ? c.throttle * def.speed * sp : c.throttle * def.reverse * sp;
     target *= 1 - clamp(slope * Math.sign(target || 1) * 1.2, -0.25, 0.65);
+    if (lg && W.groundAt(t.x, t.z, true) > W.heightAt(t.x, t.z) + 0.15) target *= 0.8; // bumping over a log
     const accel = (Math.sign(target) !== Math.sign(t.speed) && Math.abs(t.speed) > 0.5 ? 2.2 : 1) * def.accel * (c.throttle === 0 ? 0.8 : 1);
     t.speed += clamp(target - t.speed, -accel * dt, accel * dt);
     const turnMul = 1 - Math.min(Math.abs(t.speed) / (def.speed * 2.5), 0.3);
@@ -402,6 +404,7 @@ export class Sim {
     else { t.speed *= -0.25; t.kx = t.kz = 0; }
     W.query(t.x, t.z, t.radius, (o) => {
       if (o.soft) { this.breakObstacle(o, t); return; }
+      if (o.log && crossesLogs(def)) return; // rolls over it (see groundAt)
       const dx = t.x - o.x, dz = t.z - o.z, d = Math.hypot(dx, dz) || 0.01;
       const pen = t.radius + o.r - d;
       if (pen <= 0) return;
@@ -418,14 +421,15 @@ export class Sim {
     // ground follow + tilt
     const fx = Math.sin(t.yaw), fz = Math.cos(t.yaw), rx = Math.cos(t.yaw), rz = -Math.sin(t.yaw);
     const L = 1.7 * t.scale, Wd = 1.1 * t.scale;
-    const hF = W.heightAt(t.x + fx * L, t.z + fz * L), hB = W.heightAt(t.x - fx * L, t.z - fz * L);
-    const hR = W.heightAt(t.x + rx * Wd, t.z + rz * Wd), hL = W.heightAt(t.x - rx * Wd, t.z - rz * Wd);
+    const lg = crossesLogs(def);
+    const hF = W.groundAt(t.x + fx * L, t.z + fz * L, lg), hB = W.groundAt(t.x - fx * L, t.z - fz * L, lg);
+    const hR = W.groundAt(t.x + rx * Wd, t.z + rz * Wd, lg), hL = W.groundAt(t.x - rx * Wd, t.z - rz * Wd, lg);
     const df = (hF - hB) / (2 * L), dr = (hR - hL) / (2 * Wd);
     const n0 = -df * fx - dr * rx, n1 = 1, n2 = -df * fz - dr * rz, nl = Math.hypot(n0, n1, n2);
     const k = Math.min(1, dt * 10);
     t.n[0] = lerp(t.n[0], n0 / nl, k); t.n[1] = lerp(t.n[1], n1 / nl, k); t.n[2] = lerp(t.n[2], n2 / nl, k);
     const ln = Math.hypot(t.n[0], t.n[1], t.n[2]); t.n[0] /= ln; t.n[1] /= ln; t.n[2] /= ln;
-    t.y = lerp(t.y, Math.max((hF + hB + hR + hL) / 4, W.heightAt(t.x, t.z)), Math.min(1, dt * 15));
+    t.y = lerp(t.y, Math.max((hF + hB + hR + hL) / 4, W.groundAt(t.x, t.z, lg)), Math.min(1, dt * 15));
     this.updateMatrices(t);
   }
 

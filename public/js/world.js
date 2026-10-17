@@ -6,6 +6,8 @@ import { m4, makeNoise, makeRng, clamp, lerp, smooth, alignToNormal } from './ma
 
 export const WATER_LEVEL = -1.2;
 const GHOST_ALPHA = 0.2, GHOST_FADE_T = 0.25; // see-through props: final opacity and fade time (s)
+/** Fallen logs are a ramp for every vehicle except the light scout, which treats them as solid. */
+export const crossesLogs = (def) => def.id !== 'scout';
 
 const DIRT = hex('#B88754'), STRAW = hex('#C7A866'), GRASS = hex('#75D152'), GRASS2 = hex('#61BD40');
 const CLIFF = ['#9E6B45', '#785238', '#664733', '#4F3727'].map(hex);
@@ -31,6 +33,7 @@ export class World {
     this.rngC = makeRng(cfg.seed * 104729 + 7); // cosmetic-only randomness
     this.noise = makeNoise(cfg.seed);
     this.obstacles = [];
+    this.logs = [];
     this.cellSize = 8;
     this.gridN = Math.ceil(this.size / this.cellSize);
     this.grid = Array.from({ length: this.gridN * this.gridN }, () => []);
@@ -154,6 +157,22 @@ export class World {
     // triangles: (00,01,11) and (00,11,10) split along the diagonal u==v
     if (v > u) return h00 + (h11 - h01) * u + (h01 - h00) * v;
     return h00 + (h10 - h00) * u + (h11 - h10) * v;
+  }
+
+  /** Ground height for a vehicle: the terrain, plus fallen logs when it can drive over them. */
+  groundAt(x, z, logs) {
+    const h = this.heightAt(x, z);
+    if (!logs) return h;
+    let g = h;
+    for (const L of this.logs) {
+      const dx = x - L.x, dz = z - L.z;
+      if (Math.abs(dx) > L.hl + L.w || Math.abs(dz) > L.hl + L.w) continue;
+      const a = Math.abs(dx * L.ax + dz * L.az), p = Math.abs(dz * L.ax - dx * L.az);
+      if (p >= L.w || a >= L.hl + 0.3) continue;
+      const end = Math.min(1, (L.hl + 0.3 - a) / 0.6); // taper off past the cut ends
+      g = Math.max(g, L.base + L.top * 0.5 * (1 + Math.cos(Math.PI * p / L.w)) * end);
+    }
+    return g;
   }
 
   normalAt(x, z, out = [0, 1, 0]) {
@@ -503,7 +522,9 @@ export class World {
       M.log.add(m4.compose(m, x, h - 0.12, z, yaw, 0, 0, s));
       this.blob(B, x, z, 1.7 * s, 0.6);
       const c = Math.cos(yaw), sn = Math.sin(yaw);
-      for (const o of [-0.9, 0.9]) this.addObstacle({ x: x + c * o * s, z: z - sn * o * s, r: 0.7 * s, top: h + 0.8 * s, kind: 'rock' });
+      for (const o of [-0.9, 0.9]) this.addObstacle({ x: x + c * o * s, z: z - sn * o * s, r: 0.7 * s, top: h + 0.8 * s, kind: 'rock', log: true });
+      // drive-over profile: a smooth hump a little wider than the trunk so tracks ramp up onto it
+      this.logs.push({ x, z, ax: c, az: -sn, hl: 1.4 * s, w: 1.2 * s, base: h - 0.12, top: 0.76 * s });
     });
 
     // --- destructibles ---
@@ -631,6 +652,9 @@ export class World {
     this.nav = new Uint8Array(N * N);
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) this.nav[j * N + i] = this.navCellBlocked(i, j) ? 1 : 0;
     this.markReachable();
+    // scouts can't climb logs: same grid with the log cells closed
+    this.navScout = new Uint8Array(N * N);
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) this.navScout[j * N + i] = this.nav[j * N + i] || (this.navCellHasLog(i, j) ? 1 : 0);
   }
 
   /** Flood-fill from the first spawn; cells tanks can never reach are marked 2 so bots never target them. */
@@ -676,7 +700,14 @@ export class World {
     if (!this.inBounds(x, z, 3)) return true;
     if (this.heightAt(x, z) < WATER_LEVEL + 0.5) return true;
     let b = false;
-    this.query(x, z, 2.0, (o) => { if (!o.soft) { b = true; return false; } });
+    this.query(x, z, 2.0, (o) => { if (!o.soft && !o.log) { b = true; return false; } });
+    return b;
+  }
+
+  navCellHasLog(i, j) {
+    const C = this.navC;
+    let b = false;
+    this.query(-this.half + (i + 0.5) * C, -this.half + (j + 0.5) * C, 2.0, (o) => { if (o.log) { b = true; return false; } });
     return b;
   }
 
@@ -684,12 +715,16 @@ export class World {
     const C = this.navC, N = this.navN;
     const i0 = clamp(Math.floor((x - r + this.half) / C), 0, N - 1), i1 = clamp(Math.floor((x + r + this.half) / C), 0, N - 1);
     const j0 = clamp(Math.floor((z - r + this.half) / C), 0, N - 1), j1 = clamp(Math.floor((z + r + this.half) / C), 0, N - 1);
-    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) this.nav[j * N + i] = this.navCellBlocked(i, j) ? 1 : 0;
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const k = j * N + i;
+      this.nav[k] = this.navCellBlocked(i, j) ? 1 : 0;
+      this.navScout[k] = this.nav[k] || (this.navCellHasLog(i, j) ? 1 : 0);
+    }
   }
 
   /** A* on the nav grid. Returns a list of [x,z] waypoints (excluding start) or null. */
-  findPath(sx, sz, tx, tz, maxIter = 4000) {
-    const C = this.navC, N = this.navN, nav = this.nav;
+  findPath(sx, sz, tx, tz, maxIter = 4000, scout = false) {
+    const C = this.navC, N = this.navN, nav = scout ? this.navScout : this.nav;
     const toCell = (x, z) => [clamp(Math.floor((x + this.half) / C), 0, N - 1), clamp(Math.floor((z + this.half) / C), 0, N - 1)];
     let [si, sj] = toCell(sx, sz);
     let [ti, tj] = toCell(tx, tz);
@@ -764,7 +799,7 @@ export class World {
     let ax = sx, az = sz, k = 0;
     while (k < pts.length) {
       let far = k;
-      for (let m = pts.length - 1; m > k; m--) if (this.navLineClear(ax, az, pts[m][0], pts[m][1])) { far = m; break; }
+      for (let m = pts.length - 1; m > k; m--) if (this.navLineClear(ax, az, pts[m][0], pts[m][1], scout)) { far = m; break; }
       out.push(pts[far]);
       [ax, az] = pts[far];
       k = far + 1;
@@ -772,13 +807,13 @@ export class World {
     return out;
   }
 
-  navLineClear(x0, z0, x1, z1) {
-    const C = this.navC, N = this.navN;
+  navLineClear(x0, z0, x1, z1, scout = false) {
+    const C = this.navC, N = this.navN, nav = scout ? this.navScout : this.nav;
     const L = Math.hypot(x1 - x0, z1 - z0), steps = Math.ceil(L / (C * 0.5));
     for (let s = 0; s <= steps; s++) {
       const t = s / steps;
       const i = Math.floor((x0 + (x1 - x0) * t + this.half) / C), j = Math.floor((z0 + (z1 - z0) * t + this.half) / C);
-      if (i < 0 || j < 0 || i >= N || j >= N || this.nav[j * N + i]) return false;
+      if (i < 0 || j < 0 || i >= N || j >= N || nav[j * N + i]) return false;
     }
     return true;
   }
