@@ -65,11 +65,12 @@ export class Room {
       if (this.sim.state !== 'lobby') this.sim.humanLeave(c.slot);
       // promote the longest-waiting spectator into the freed seat
       const next = [...this.clients.values()].find((q) => q.hello && q.slot < 0);
-      if (next) { this.seat(next); this.send(next, { t: 'welcome', you: next.slot, cfg: this.publicCfg(), dead: this.deadList() }); this.log(`${next.name} moved from spectator to seat ${next.slot + 1}`); }
+      if (next) { this.seat(next); this.send(next, { t: 'welcome', you: next.slot, cfg: this.publicCfg(), dead: this.deadList(), apples: this.appleList() }); this.log(`${next.name} moved from spectator to seat ${next.slot + 1}`); }
     }
     this.broadcastLobby();
   }
 
+  appleList() { return this.sim.world.obstacles.filter((o) => o.apples0 && o.apples < o.apples0).map((o) => [o.index, o.apples]); }
   deadList() { return this.sim.world.obstacles.filter((o) => !o.alive).map((o) => o.index); }
 
   onMessage(c, m) {
@@ -82,7 +83,7 @@ export class Room {
           this.seat(c);
           this.log(`${c.name} joined${c.slot >= 0 ? ` (seat ${c.slot + 1})` : ' as spectator (room full)'}`);
         } else if (c.slot >= 0) { const t = this.sim.tankById(c.slot); if (t && t.human) t.name = c.name; }
-        this.send(c, { t: 'welcome', you: c.slot, cfg: this.publicCfg(), dead: this.deadList() });
+        this.send(c, { t: 'welcome', you: c.slot, cfg: this.publicCfg(), dead: this.deadList(), apples: this.appleList() });
         this.broadcastLobby();
         this.maybeAutoStart();
         break;

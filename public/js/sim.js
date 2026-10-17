@@ -203,6 +203,7 @@ export class Sim {
   restart() {
     this.projectiles = []; this.drops = []; this.strikes = []; this.smokes = []; this.timers = [];
     for (const o of this.world.obstacles) if (o.hp !== undefined || o.soft) { o.alive = true; o.hp = o.kind === 'crate' ? 30 : o.kind === 'barrel' ? 15 : 1; }
+    for (const o of this.world.obstacles) if (o.apples0) o.apples = o.apples0;
     this.world.buildNav();
     this.initPickups();
     this.winner = null; this.firstBlood = false; this.dropT = this.cfg.airdrop;
@@ -361,7 +362,8 @@ export class Sim {
       t.x += (dx / d) * pen; t.z += (dz / d) * pen;
       const fwdDot = -(dx / d) * Math.sin(t.yaw) - (dz / d) * Math.cos(t.yaw);
       if (fwdDot * Math.sign(t.speed) > 0.5 && Math.abs(t.speed) > 6 && t.ramT <= 0) {
-        this.emit('bump', { x: r1(o.x - (dx / d) * o.r), y: r1(t.y + 1), z: r1(o.z - (dz / d) * o.r), tree: o.kind === 'tree' ? 1 : 0 });
+        this.emit('bump', { x: r1(o.x - (dx / d) * o.r), y: r1(t.y + 1), z: r1(o.z - (dz / d) * o.r), tree: o.kind === 'tree' ? 1 : 0, i: o.index });
+        if (o.apples) this.dropApples(o, Math.abs(t.speed) > 11 ? 3 : 2);
         t.ramT = 0.5;
       }
       t.speed *= 1 - clamp(fwdDot * Math.sign(t.speed), 0, 1) * 0.5;
@@ -666,6 +668,23 @@ export class Sim {
       }
     }
     this.world.query(x, z, radius * 0.8, (o) => { if (o.hp || o.soft) this.damageObstacle(o, splashDmg + 20, owner); });
+    // blasts shake apples loose from nearby fruit trees (more the closer they are)
+    const ar = radius * 1.5 + 3;
+    this.world.query(x, z, ar, (o) => {
+      if (!o.apples) return;
+      const k = 1 - Math.hypot(o.x - x, o.z - z) / (ar + o.r);
+      if (k > 0) this.dropApples(o, Math.ceil(k * k * 6), x, z);
+    });
+  }
+
+  /** Knock `n` apples off a fruit tree. Cosmetic, but counted here so every player sees the same tree. */
+  dropApples(o, n, bx, bz) {
+    n = Math.min(n, o.apples);
+    if (n <= 0) return;
+    o.apples -= n;
+    const e = { i: o.index, n, r: o.apples };
+    if (bx !== undefined) { e.bx = r1(bx); e.bz = r1(bz); }
+    this.emit('apples', e);
   }
 
   breakObstacle(o, by) {
