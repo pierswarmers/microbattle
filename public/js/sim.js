@@ -297,7 +297,7 @@ export class Sim {
       t.stats.shots++;
       t.stats.byWeapon[w.id].shots++;
       const p = this.seekerShot(t, w, Math.hypot(e.x - t.x, e.z - t.z), Math.atan2(e.x - t.x, e.z - t.z));
-      if (this.lockValid(t, e, Math.PI) && this.los(t, e)) { p.target = e; this.emit('locked', { id: t.id, target: e.id }); }
+      if (this.lockValid(t, e, Math.PI)) { p.target = e; this.emit('locked', { id: t.id, target: e.id }); }
       this.projectiles.push(p);
       this.emit('fire', { id: t.id, w: w.id });
     }
@@ -305,7 +305,7 @@ export class Sim {
     if (!targets.length || w.ammo <= 0) { t.salvo = null; t.cooldown = Math.max(t.cooldown, WEAPONS.seeker.reload); }
   }
 
-  /** Bird's-eye locks the client claims, re-checked here: alive, in range, near the aimed circle, visible, not in smoke. */
+  /** Bird's-eye locks the client claims, re-checked here: alive, in range, near the aimed circle, not in smoke. */
   multiLocks(t, c) {
     const S = WEAPONS.seeker;
     if (!Array.isArray(c.locks) || !c.locks.length) return [];
@@ -315,7 +315,7 @@ export class Sim {
       const e = this.tankById(id);
       if (!e || out.includes(e)) continue;
       if (Math.hypot(e.x - ax, e.z - az) > S.lockRadius * 1.8) continue; // grace for latency and movement
-      if (this.lockValid(t, e, Math.PI) && this.los(t, e)) out.push(e);
+      if (this.lockValid(t, e, Math.PI)) out.push(e); // lobbed over cover: smoke breaks it, trees don't
     }
     return out;
   }

@@ -623,7 +623,8 @@ export class Client {
     }
   }
 
-  /** Bird's-eye seeker lock: any enemy that dwells inside the circle round the aim point gets locked. */
+  /** Bird's-eye seeker lock: any enemy that dwells briefly inside the circle round the aim point gets locked.
+   *  No line-of-sight check: the seeker lobs high over trees and hills; only smoke and ghosts break it. */
   updateMultiLock(dt, W) {
     const M = this.mlock, me = this.me;
     M.on = W.kind === 'seeker' && this.view === 'birdseye';
@@ -643,9 +644,9 @@ export class Client {
         if (d > W.range) { ok = false; M.reason = 'OUT OF RANGE'; }
         else if (d < 10) { ok = false; M.reason = 'TOO CLOSE'; }
         else if (this.smokes.some((s) => Math.hypot(t.x - s.x, t.z - s.z) < s.r * 0.85 || segCircle(me.x, me.z, t.x, t.z, s.x, s.z, s.r * 0.85))) { ok = false; M.reason = 'TARGET IN SMOKE'; }
-        else if (this.world.segmentBlocked(me.x, me.y + 2, me.z, t.x, t.y + 1.5, t.z)) { ok = false; M.reason = 'NO LINE OF SIGHT'; }
       }
-      if (!ok) { if (held > 0) { const h = isLocked ? 0 : held - dt * 2; if (h > 0) M.prog.set(t.id, h); else M.prog.delete(t.id); } continue; }
+      // leaving the circle (or smoke) bleeds progress off gently, so a brief wobble doesn't restart the lock
+      if (!ok) { if (held > 0) { const h = Math.min(held, W.multiLockTime * 0.99) - dt; if (h > 0) M.prog.set(t.id, h); else M.prog.delete(t.id); } continue; }
       const h = Math.min(W.multiLockTime, held + dt);
       M.prog.set(t.id, h);
       if (h >= W.multiLockTime) locked.push(t.id);
