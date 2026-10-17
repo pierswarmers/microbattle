@@ -5,6 +5,7 @@ import { Mesh, hex } from './gl.js';
 import { m4, makeNoise, makeRng, clamp, lerp, smooth, alignToNormal } from './math.js';
 
 export const WATER_LEVEL = -1.2;
+const GHOST_ALPHA = 0.2, GHOST_FADE_T = 0.25; // see-through props: final opacity and fade time (s)
 
 const DIRT = hex('#B88754'), STRAW = hex('#C7A866'), GRASS = hex('#75D152'), GRASS2 = hex('#61BD40');
 const CLIFF = ['#9E6B45', '#785238', '#664733', '#4F3727'].map(hex);
@@ -397,10 +398,12 @@ export class World {
       return [f[0] * j, f[1] * j, f[2] * j];
     };
 
+    // houses, the windmill and big boulders are drawn per frame so they can fade when hiding a tank
+    this.bigProps = [];
     // --- farm in the centre ---
     const house = (x, z, yaw) => {
       const y = this.heightAt(x, z) - 0.2;
-      M.house.add(m4.compose(m, x, y, z, yaw), 0.95, 0.36, 0.32, 1);
+      this.bigProps.push({ mesh: M.house, ghost: M.houseG, m: m4.compose(m4.create(), x, y, z, yaw), col: [0.95, 0.36, 0.32], x, z, base: y, top: y + 7, rad: 4.4 });
       this.blob(B, x, z, 5.6, 6);
       // approximate the house with a few circles
       const c = Math.cos(yaw), s = Math.sin(yaw);
@@ -409,7 +412,7 @@ export class World {
     house(-12, 8, 0.3);
     const wmX = 11, wmZ = -9;
     const wy = this.heightAt(wmX, wmZ) - 0.2;
-    M.windmill.add(m4.compose(m, wmX, wy, wmZ, -0.6));
+    this.bigProps.push({ mesh: M.windmill, ghost: M.windmillG, m: m4.compose(m4.create(), wmX, wy, wmZ, -0.6), col: [1, 1, 1], x: wmX, z: wmZ, base: wy, top: wy + 14, rad: 2.8 });
     this.blob(B, wmX, wmZ, 4.2, 10);
     this.addObstacle({ x: wmX, z: wmZ, r: 3.2, top: wy + 14, kind: 'windmill' });
     this.ambient.blades.push({ x: wmX + Math.sin(-0.6) * 2.4, y: wy + 10.5, z: wmZ + Math.cos(-0.6) * 2.4, yaw: -0.6, a: 0 });
@@ -445,7 +448,8 @@ export class World {
     place(Math.round(55 * dens), 2.5, { gap: 2 }, (x, z, h) => {
       const s = rng.range(1.2, 3.4);
       const g = rng.range(0.92, 1.05);
-      M.rock.add(m4.compose(m, x, h - 0.2, z, rng() * 6.28, rng() * 0.2, 0, s, s * rng.range(0.7, 1.2), s), g, g, g);
+      const rm = m4.compose(m4.create(), x, h - 0.2, z, rng() * 6.28, rng() * 0.2, 0, s, s * rng.range(0.7, 1.2), s);
+      this.bigProps.push({ mesh: M.boulder, ghost: M.boulderG, m: rm, col: [g, g, g], x, z, base: h - 0.2, top: h - 0.2 + rm[5] * 1.3, rad: s * 1.05 });
       this.blob(B, x, z, s * 1.25, s);
       this.addObstacle({ x, z, r: s * 0.95, top: h + s * 0.9, kind: 'rock' });
       const n = rngC.int(1, 3);
@@ -827,31 +831,59 @@ export class World {
     }
   }
 
-  drawDynamic(time, birdsEye, camH, focus, tanks = []) {
+  /**
+   * Does a prop (vertical cylinder x,z,rad from base to top) sit on a sight line from the camera to a
+   * watched tank? `occ` = { eye: [x,y,z], pts: [[x,y,z], ...] } or null.
+   */
+  occludes(occ, x, z, rad, base, top) {
+    if (!occ) return false;
+    const [ex, ey, ez] = occ.eye;
+    for (const p of occ.pts) {
+      const dx = p[0] - ex, dy = p[1] - ey, dz = p[2] - ez;
+      const px = ex - x, pz = ez - z;
+      const a = dx * dx + dz * dz, b = 2 * (px * dx + pz * dz), c = px * px + pz * pz - rad * rad;
+      let t0 = 0, t1 = 1;
+      if (a < 1e-6) { if (c > 0) continue; } else {
+        const disc = b * b - 4 * a * c;
+        if (disc <= 0) continue;
+        const q = Math.sqrt(disc);
+        t0 = Math.max(0, (-b - q) / (2 * a)); t1 = Math.min(1, (-b + q) / (2 * a));
+        if (t0 >= t1) continue;
+      }
+      const y0 = ey + dy * t0, y1 = ey + dy * t1;
+      if (Math.max(y0, y1) >= base && Math.min(y0, y1) <= top) return true;
+    }
+    return false;
+  }
+
+  /** Ease a prop's see-through amount toward its target; returns the instance alpha (1 = solid). */
+  fadeAlpha(o, hidden, dt) {
+    const f = clamp((o.fade || 0) + (hidden ? dt : -dt) / GHOST_FADE_T, 0, 1);
+    o.fade = f;
+    return 1 - (1 - GHOST_ALPHA) * f * f * (3 - 2 * f);
+  }
+
+  drawDynamic(time, dt, focus, occ) {
     const M = this.M, m = this.tmpM, Bd = M.blob;
     this.focus = focus;
-    // tall props between the camera (south, above) and a tank fade right down so the tank stays visible
-    const hides = (x, z, s, top) => {
-      if (!birdsEye) return false;
-      for (const k of tanks) {
-        if (!k.alive) continue;
-        const dz = z - k.z, dx = Math.abs(x - k.x);
-        if (dx < 3.4 * s && dz > -2.5 && dz < (top - k.y) * 0.95 + 1.5) return true;
-      }
-      return false;
-    };
+    // props between the camera and a watched tank fade smoothly down to see-through
     const solid = [M.treeRound, M.treePine, M.treeFruit], ghost = [M.treeRoundG, M.treePineG, M.treeFruitG];
     for (const t of this.trees) {
-      const g = hides(t.x, t.z, t.s, t.top);
-      if (g) ghost[t.kind].add(t.m, t.col[0], t.col[1], t.col[2], 0.12);
+      const base = t.m[13] + (t.kind === 1 ? 1.2 : 2.0) * t.s;
+      const a = this.fadeAlpha(t, this.occludes(occ, t.x, t.z, t.br * 0.95, base, t.top), dt);
+      if (a < 1) ghost[t.kind].add(t.m, t.col[0], t.col[1], t.col[2], a);
       else solid[t.kind].add(t.m, t.col[0], t.col[1], t.col[2]);
-      this.blob(Bd, t.x, t.z, t.br, t.top - t.m[13], g ? 0.04 : 0.22);
+      this.blob(Bd, t.x, t.z, t.br, t.top - t.m[13], 0.04 + 0.18 * (a - GHOST_ALPHA) / (1 - GHOST_ALPHA));
     }
     for (const t of this.mushrooms) {
-      const g = hides(t.x, t.z, t.s * 1.2, t.top);
-      if (g) M.mushroomG.add(t.m, t.col[0], t.col[1], t.col[2], 0.12);
+      const a = this.fadeAlpha(t, this.occludes(occ, t.x, t.z, t.br, t.m[13] + 1.5 * t.s, t.top), dt);
+      if (a < 1) M.mushroomG.add(t.m, t.col[0], t.col[1], t.col[2], a);
       else M.mushroom.add(t.m, t.col[0], t.col[1], t.col[2]);
-      this.blob(Bd, t.x, t.z, t.br, 3 * t.s, g ? 0.04 : 0.22);
+      this.blob(Bd, t.x, t.z, t.br, 3 * t.s, 0.04 + 0.18 * (a - GHOST_ALPHA) / (1 - GHOST_ALPHA));
+    }
+    for (const o of this.bigProps) {
+      const a = this.fadeAlpha(o, this.occludes(occ, o.x, o.z, o.rad, o.base, o.top), dt);
+      (a < 1 ? o.ghost : o.mesh).add(o.m, o.col[0], o.col[1], o.col[2], a);
     }
     for (const o of this.bushes) {
       if (!o.alive) continue;

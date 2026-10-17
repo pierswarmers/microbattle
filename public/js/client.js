@@ -853,9 +853,7 @@ export class Client {
     this.hud.resize(window.devicePixelRatio || 1);
     const v = this.updateCamera(dt);
     for (const mesh of r.meshes) if (!mesh.static) mesh.clear();
-    const birds = v.kind === 'birdseye' || v.kind === 'lobby';
-    const alive = [...this.tanks.values()].filter((t) => t.net.al).map((t) => ({ x: t.x, y: t.y, z: t.z, alive: true }));
-    this.world.drawDynamic(this.time, birds, v.camH || 60, v.focus || [0, 0, 0], birds ? alive : []);
+    this.world.drawDynamic(this.time, dt, v.focus || [0, 0, 0], this.occluderWatch(v));
     this.drawTanks(v);
     this.drawProjectiles();
     this.drawPickups();
@@ -865,6 +863,21 @@ export class Client {
     r.beginFrame(this.time);
     r.renderView(v);
     this.hud.draw(v, dt);
+  }
+
+  /**
+   * Sight lines that scenery must not block: camera to your own tank in chase and bird's-eye, plus in
+   * bird's-eye every other visible tank. Props crossing them fade see-through (world.drawDynamic).
+   */
+  occluderWatch(v) {
+    if (v.kind !== 'chase' && v.kind !== 'birdseye') return null;
+    const pts = [];
+    for (const t of this.tanks.values()) {
+      if (!t.net.al || (t !== this.me && (v.kind !== 'birdseye' || t.net.pw.ghost))) continue;
+      const s = t.scale || 1;
+      pts.push([t.x, t.y + 0.8 * s, t.z], [t.x, t.y + 2.2 * s, t.z]);
+    }
+    return pts.length ? { eye: v.cam, pts } : null;
   }
 
   drawTanks(v) {

@@ -111,7 +111,8 @@ void main() {
   if (uOutline > 0.0) {
     // cartoon ink: a dark plum-tinted take on the object's own colour
     vec3 ink = vCol.rgb * 0.2 + vec3(0.14, 0.05, 0.13);
-    outCol = vec4(mix(ink, uFogCol, fog), 1.0);
+    // see-through props keep a firmer ink line than their body so the silhouette still reads
+    outCol = vec4(mix(ink, uFogCol, fog), min(vCol.a * 2.0, 1.0));
     return;
   }
   if (uMode == 1) { // unlit / emissive; translucent ones fade out right in front of the camera
@@ -233,12 +234,14 @@ export class Mesh {
     this.static = !!opts.static;
     this.sway = opts.sway || 0;
     this.mode = opts.mode || 0; // 0 lit, 1 unlit, 2 water, 3 fire, 4 soft smoke, 5 soft blob, 6 cloud, 7 lit two-sided
-    this.transparent = !!opts.transparent;
+    // ghost: see-through prop that keeps its outline and only shows its front-most surface
+    this.ghost = !!opts.ghost;
+    this.transparent = !!opts.transparent || this.ghost;
     this.additive = !!opts.additive;
     this.cull = opts.cull !== false;
     this.layer = opts.layer || 0;
     // every solid lit prop gets a cartoon outline unless it opts out
-    this.outline = opts.outline ?? (this.mode === 0 && !this.transparent && this.cull);
+    this.outline = opts.outline ?? (this.mode === 0 && (!this.transparent || this.ghost) && this.cull);
     this.outlineMax = opts.outlineMax || 0.16;
     this.cap = opts.capacity || 64;
     this.data = new Float32Array(this.cap * FLOATS_PER_INSTANCE);
@@ -472,6 +475,7 @@ export class Renderer {
     gl.depthMask(false);
     for (const m of this.meshes) {
       if (!m.transparent || m.n === 0) continue;
+      if (m.ghost) { this.drawGhost(m); continue; }
       if (m.additive) gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
       else gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       if (m.mode === 5) { gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-2, -4); }
@@ -481,6 +485,39 @@ export class Renderer {
     gl.depthMask(true);
     gl.disable(gl.BLEND);
     gl.bindVertexArray(null);
+  }
+
+  /**
+   * See-through prop: lay down depth for the body and its outline hull first, then blend only the
+   * front-most surfaces, so overlapping facets inside a canopy never double up and the ink stays crisp.
+   */
+  drawGhost(m) {
+    const gl = this.gl;
+    gl.depthMask(true);
+    gl.colorMask(false, false, false, false);
+    this.drawMesh(m);
+    this.drawOutline(m);
+    gl.colorMask(true, true, true, true);
+    gl.depthMask(false);
+    gl.depthFunc(gl.LEQUAL);
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    this.drawOutline(m);
+    this.drawMesh(m);
+    gl.depthFunc(gl.LESS);
+  }
+
+  drawOutline(m) {
+    const gl = this.gl, P = this.main;
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.FRONT);
+    gl.uniform1f(P.u.uOutline, this.outlineK);
+    gl.uniform1f(P.u.uOutlineMax, m.outlineMax);
+    gl.uniform1f(P.u.uSway, m.sway);
+    gl.uniform1i(P.u.uMode, m.mode);
+    gl.bindVertexArray(m.vao);
+    gl.drawArraysInstanced(gl.TRIANGLES, 0, m.count, m.n);
+    gl.cullFace(gl.BACK);
+    gl.uniform1f(P.u.uOutline, 0);
   }
 
   drawMesh(m) {
