@@ -405,7 +405,10 @@ export class Client {
     this.time += dt;
     this.handleKeys();
     if (this.state === 'lobby' || this.state === 'connecting') this.lobbyControls();
-    else this.playerControls(dt, now);
+    else {
+      if (this.state === 'over') this.pickControls();
+      this.playerControls(dt, now);
+    }
     this.world.updateAmbient(dt, this.time);
     this.fx.update(dt);
     this.updateCosmetics(dt, now);
@@ -423,6 +426,18 @@ export class Client {
 
   lobbyControls() {
     const I = this.input;
+    this.pickControls();
+    if (I.take('Enter') || I.padPressed(9)) { this.net.send({ t: 'start' }); this.sound.init(); this.audioStarted = true; }
+    if (I.take('KeyN')) {
+      const n = window.prompt('Your name:', this.name);
+      if (n) { this.name = n.slice(0, 14); safeStore('mb_name', this.name); this.net.send({ t: 'hello', name: this.name, type: this.type }); }
+    }
+  }
+
+  /** Vehicle choice and ready toggle: in the lobby and in the intermission between rounds. */
+  pickControls() {
+    const I = this.input;
+    if (this.you < 0) return;
     let d = 0;
     if (I.take('KeyA', 'ArrowLeft') || I.padPressed(14)) d = -1;
     if (I.take('KeyD', 'ArrowRight') || I.padPressed(15)) d = 1;
@@ -435,11 +450,6 @@ export class Client {
     }
     const mine = this.lobby.players.find((p) => p.slot === this.you && this.you >= 0);
     if (I.take('Space') || I.padPressed(0)) { this.net.send({ t: 'lobby', ready: !(mine && mine.ready) }); this.sound.init(); this.audioStarted = true; this.sound.play('pickup', 0.6); }
-    if (I.take('Enter') || I.padPressed(9)) { this.net.send({ t: 'start' }); this.sound.init(); this.audioStarted = true; }
-    if (I.take('KeyN')) {
-      const n = window.prompt('Your name:', this.name);
-      if (n) { this.name = n.slice(0, 14); safeStore('mb_name', this.name); this.net.send({ t: 'hello', name: this.name, type: this.type }); }
-    }
   }
 
   /** Read controls, update the local aim + predicted turret, and send the input record to the server. */

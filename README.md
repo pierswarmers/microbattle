@@ -15,6 +15,7 @@ The server prints its address on your network, for example `http://192.168.1.20:
 - In the lobby, everyone picks a vehicle.
 - The match starts when everyone is ready, or when anyone presses **Enter**.
 - Empty seats are filled with bots.
+- When a round ends (score or time limit), the results show with an intermission picker: everyone can change vehicle and press **Space** when ready. The next round starts when all players are ready, when anyone presses **Enter**, or after 20 seconds. Bots pick a new random vehicle each round.
 - Players can join in the middle of a match and take over a bot's seat. If a player leaves, a bot takes over their tank.
 
 The server binds `0.0.0.0` by default so it can be reached from your network. Use `--host 127.0.0.1` to keep it on this machine only.
