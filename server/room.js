@@ -184,7 +184,7 @@ export class Room {
       if (this.cycle && !this.tallied) { this.tallied = true; this.tally(); }
       this.overT += DT;
       // between cycle rounds there's a short intermission; the final results stay up longer
-      if (this.overT > (this.lastRound ? 15 : 8)) this.advance();
+      if (this.overT > (!this.cycle ? 12 : this.lastRound ? 15 : 8)) this.advance();
     } else this.tallied = false;
     this.stepN++;
     if (this.stepN % SNAP_EVERY === 0) this.broadcastSnapshot();
