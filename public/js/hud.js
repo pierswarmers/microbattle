@@ -187,7 +187,7 @@ export class HUD {
     const q = this.project(v, pt[0], pt[1], pt[2]);
     if (q) this.crosshair(q.x, q.y, me.css, W.kind === 'bullet' ? 9 + me.net.bloom * 120 : 9);
     this.reload(v.w / 2, v.h - 120, me, W);
-    if (W.kind === 'seeker') this.label(v.w / 2, v.h - 150, 'Seeker lock-on needs COMMANDER view (C)', 12, '#ffe08a', 'center');
+    if (W.kind === 'seeker') this.label(v.w / 2, v.h - 150, 'Seeker lock-on: COMMANDER view (C) or bird\'s-eye multi-lock', 12, '#ffe08a', 'center');
     if (W.kind === 'strike' || W.kind === 'seeker' || g.rangedAim) this.label(v.w / 2, v.h - 92, `RANGE ${Math.round(g.aim.range)}m  (↑↓)`, 13, '#bfffd0', 'center');
   }
 
@@ -197,7 +197,47 @@ export class HUD {
     if (g.aim.mouse && g.mouseTarget) { const q = this.project(v, ...g.mouseTarget); if (q) this.crosshair(q.x, q.y, me.css); }
     const p = this.project(v, me.x, me.y, me.z);
     if (p) this.reload(p.x, p.y + 30, me, W, 18);
+    if (g.mlock.on) this.drawMultiLock(v, me, W);
     if (W.kind === 'strike' || W.kind === 'seeker' || g.rangedAim) this.label(v.w / 2, v.h - 160, `RANGE ${Math.round(g.aim.range)}m  (↑↓ or mouse)`, 13, '#bfffd0', 'center');
+  }
+
+  /** Bird's-eye seeker: the lock circle on the ground, a filling ring on each tank being locked, red brackets once locked. */
+  drawMultiLock(v, me, W) {
+    const g = this.g, ctx = this.ctx, M = g.mlock;
+    const n = M.locked.length;
+    const ammo = (me.net.w.find(([id]) => id === 'seeker') || [0, 0])[1];
+    const col = n ? '#ff3b30' : '#ffd84d';
+    ctx.save();
+    ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.setLineDash([10, 7]); ctx.lineDashOffset = -g.realTime * 12;
+    ctx.beginPath();
+    for (let i = 0, first = true; i <= 48; i++) {
+      const a = (i / 48) * Math.PI * 2, x = M.cx + Math.sin(a) * W.lockRadius, z = M.cz + Math.cos(a) * W.lockRadius;
+      const q = this.project(v, x, g.world.heightAt(x, z) + 0.3, z);
+      if (!q) { first = true; continue; }
+      if (first) ctx.moveTo(q.x, q.y); else ctx.lineTo(q.x, q.y);
+      first = false;
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+    for (const [id, h] of M.prog) {
+      const t = g.tanks.get(id);
+      if (!t || !t.net.al) continue;
+      const q = this.project(v, t.x, t.y + 1, t.z);
+      if (!q) continue;
+      const prog = clamp(h / W.multiLockTime, 0, 1);
+      if (prog < 1) {
+        ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 6; ctx.beginPath(); ctx.arc(q.x, q.y, 24, 0, Math.PI * 2); ctx.stroke();
+        ctx.strokeStyle = '#ffd84d'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(q.x, q.y, 24, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2); ctx.stroke();
+      } else {
+        const s = 22 + Math.sin(g.realTime * 10) * 2, k = 9;
+        ctx.strokeStyle = '#ff3b30'; ctx.lineWidth = 3.5; ctx.beginPath();
+        for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { ctx.moveTo(q.x + a * s, q.y + b * (s - k)); ctx.lineTo(q.x + a * s, q.y + b * s); ctx.lineTo(q.x + a * (s - k), q.y + b * s); }
+        ctx.stroke();
+        this.label(q.x, q.y + s + 12, 'LOCKED', 12, '#ff3b30', 'center');
+      }
+    }
+    ctx.restore();
+    const msg = n ? `${n} LOCKED — FIRE launches ${Math.min(n, ammo)} seeker${Math.min(n, ammo) === 1 ? '' : 's'}` : M.reason || 'hold tanks inside the circle to lock on';
+    this.label(v.w / 2, v.h - 182, msg, n ? 15 : 13, n ? '#ff6a5a' : M.reason ? '#ff8a6a' : '#ffe08a', 'center');
   }
 
   reload(x, y, me, W, r = 14) {
@@ -488,7 +528,7 @@ export class HUD {
     this.controlsCard(W / 2, H * 0.33, 1.2);
     const tips = [
       'Standard: the all-purpose shell · High Velocity: flat, fast, hits like a truck (few rounds)',
-      'Heat Seeker: lock a tank in COMMANDER view; it arcs high and dives — trees and smoke protect you',
+      'Heat Seeker: lock a tank in COMMANDER view, or hold several in the bird\'s-eye circle for a salvo; it arcs high and dives — trees and smoke protect you',
       'MASSIVE: one shell, one mushroom cloud. Do not stand near it.',
       'Cluster: bursts above the target into a ring of bomblets',
       'Flamethrower: brutal up close, but watch HEAT — your own fuel can catch fire',

@@ -54,6 +54,7 @@ export class Client {
     this.weapon = null;
     this.smokeSeq = 0;
     this.lock = { cand: -1, t: 0, id: -1 };
+    this.mlock = { on: false, prog: new Map(), locked: [], cx: 0, cz: 0, reason: '' }; // bird's-eye multi-lock
     this.incoming = 0;
     this.camState = { init: false, fx: 0, fz: 0, fy: 0, h: 120, yaw: 0, eye: null };
     this.zoomH = null;
@@ -473,6 +474,7 @@ export class Client {
       if (W2.kind !== 'seeker' && W2.kind !== 'strike') this.aim.pitch = clamp(this.aim.pitchMem[wsel] ?? 0.04, def.pitchMin, def.pitchMax);
       this.sound.play('switch', 0.5);
       this.lock = { cand: -1, t: 0, id: -1 };
+      this.mlock.prog.clear(); this.mlock.locked = [];
     }
     const W = WEAPONS[this.weapon];
     const lobbed = W.kind === 'seeker' || W.kind === 'strike';
@@ -527,12 +529,13 @@ export class Client {
     const err = wrapAngle(e.ty - this.pred.yaw);
     if (Math.abs(err) > 0.02) this.pred.yaw = wrapAngle(this.pred.yaw + err * Math.min(1, dt * 3));
     this.pred.pitch += (e.p - this.pred.pitch) * Math.min(1, dt * 3);
-    // seeker lock-on: commander view only, target held near the centre of the sight
+    // seeker lock-on: commander view holds one tank in the sight; bird's-eye locks every tank held in the circle
     this.updateLock(dt, W);
+    this.updateMultiLock(dt, W);
     if (c.smoke) this.smokeSeq++;
     const aimDist = lobbed ? (this.lock.id >= 0 ? this.lockDist : this.aim.range) : ranged ? this.aim.range : this.rangeAlongGun(me) || 80;
     this.rangedAim = ranged;
-    this.sendInput({ th: c.throttle, tu: c.turn, ay: +this.aim.yaw.toFixed(4), ap: +this.aim.pitch.toFixed(4), ad: +aimDist.toFixed(1), f: c.fire && !this.help, w: this.weapon, lk: this.lock.id, sm: this.smokeSeq });
+    this.sendInput({ th: c.throttle, tu: c.turn, ay: +this.aim.yaw.toFixed(4), ap: +this.aim.pitch.toFixed(4), ad: +aimDist.toFixed(1), f: c.fire && !this.help, w: this.weapon, lk: this.lock.id, lks: this.mlock.locked, sm: this.smokeSeq });
   }
 
   sendInput(m) {
@@ -583,6 +586,38 @@ export class Client {
       const t = this.tanks.get(best);
       this.lockDist = Math.hypot(t.x - me.x, t.z - me.z);
     }
+  }
+
+  /** Bird's-eye seeker lock: any enemy that dwells inside the circle round the aim point gets locked. */
+  updateMultiLock(dt, W) {
+    const M = this.mlock, me = this.me;
+    M.on = W.kind === 'seeker' && this.view === 'birdseye';
+    if (!M.on) { if (M.prog.size || M.locked.length) { M.prog.clear(); M.locked = []; } return; }
+    M.cx = me.x + Math.sin(this.aim.yaw) * this.aim.range; M.cz = me.z + Math.cos(this.aim.yaw) * this.aim.range;
+    M.reason = '';
+    const R = W.lockRadius, was = M.locked.length;
+    const locked = [];
+    for (const t of this.tanks.values()) {
+      if (t === me) continue;
+      const held = M.prog.get(t.id) || 0, isLocked = held >= W.multiLockTime;
+      // a locked tank may drift a little outside the circle before the lock breaks
+      const inside = Math.hypot(t.x - M.cx, t.z - M.cz) < R * (isLocked ? 1.5 : 1);
+      let ok = inside && t.net.al && !t.net.pw.ghost;
+      if (ok) {
+        const d = Math.hypot(t.x - me.x, t.z - me.z);
+        if (d > W.range) { ok = false; M.reason = 'OUT OF RANGE'; }
+        else if (d < 10) { ok = false; M.reason = 'TOO CLOSE'; }
+        else if (this.smokes.some((s) => Math.hypot(t.x - s.x, t.z - s.z) < s.r * 0.85 || segCircle(me.x, me.z, t.x, t.z, s.x, s.z, s.r * 0.85))) { ok = false; M.reason = 'TARGET IN SMOKE'; }
+        else if (this.world.segmentBlocked(me.x, me.y + 2, me.z, t.x, t.y + 1.5, t.z)) { ok = false; M.reason = 'NO LINE OF SIGHT'; }
+      }
+      if (!ok) { if (held > 0) { const h = isLocked ? 0 : held - dt * 2; if (h > 0) M.prog.set(t.id, h); else M.prog.delete(t.id); } continue; }
+      const h = Math.min(W.multiLockTime, held + dt);
+      M.prog.set(t.id, h);
+      if (h >= W.multiLockTime) locked.push(t.id);
+      else if (Math.floor(h * 8) !== Math.floor((h - dt) * 8)) this.sound.play('lockBeep', 0.35);
+    }
+    if (locked.length > was) this.sound.play('locked', 0.5);
+    M.locked = locked;
   }
 
   /** Distance along the gun until it meets terrain or an obstacle. */
