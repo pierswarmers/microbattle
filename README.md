@@ -2,6 +2,15 @@
 
 A networked 3D toy-tank battle for up to four players, with bots filling any empty seats. Each player plays on their own machine. It uses only WebGL2, WebAudio and Node built-ins: no libraries, no assets and no build step.
 
+![Chase cam: a standard tank rolls past a pond as the first kill of the match lands](docs/screenshots/chase-cam.jpg)
+
+| | |
+|---|---|
+| ![Bombers carpet-bomb an air strike zone on the winter island](docs/screenshots/air-strike-winter.jpg) | ![A MASSIVE shell sends up a mushroom cloud over the spring island](docs/screenshots/massive.jpg) |
+| **Air strike** over the winter island | **MASSIVE** on the spring island |
+| ![Bird's-eye view of bomber contrails crossing the autumn island](docs/screenshots/birds-eye-autumn.jpg) | ![Commander view through the gunner's sight as an air strike warning flashes](docs/screenshots/commander-scope.jpg) |
+| **Bird's-eye** view in autumn | **Commander** gunner's sight |
+
 ## Running a game
 
 Start the server:
