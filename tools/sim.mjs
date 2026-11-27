@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Headless balance harness: runs the authoritative Sim in Node with bots only and prints statistics.
-// Usage: node tools/sim.mjs [--seconds 180] [--runs 3] [--seed 1] [--bot-tanks a,b,c,d] [--difficulty hard] [--duel a,b]
+// Usage: node tools/sim.mjs [--seconds 180] [--runs 3] [--seed 1] [--bot-tanks a,b,c,d] [--difficulty hard] [--skill 1-5] [--duel a,b]
 import { Sim } from '../public/js/sim.js';
 import { resolveConfig, toCamel } from '../public/js/config.js';
 
@@ -10,7 +10,7 @@ const seconds = +(args.seconds || 180), runs = +(args.runs || 3);
 const out = [];
 for (let r = 0; r < runs; r++) {
   const duel = args.duel ? args.duel.split(',') : null;
-  const cfg = resolveConfig({ seed: (+(args.seed || 1)) + r, bots: duel ? 2 : 4, botTanks: duel ? args.duel : (args.botTanks || ''), difficulty: args.difficulty || 'normal', scoreLimit: 0, timeLimit: 0, lobby: false, airdrop: args.airdrop ?? 35, pickups: args.pickups ?? 'true' });
+  const cfg = resolveConfig({ seed: (+(args.seed || 1)) + r, bots: duel ? 2 : 4, botTanks: duel ? args.duel : (args.botTanks || ''), difficulty: args.difficulty || 'normal', skill: args.skill ?? 5, scoreLimit: 0, timeLimit: 0, lobby: false, airdrop: args.airdrop ?? 35, pickups: args.pickups ?? 'true' });
   const sim = new Sim(cfg);
   sim.startMatch([]);
   const t0 = performance.now();

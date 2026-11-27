@@ -10,7 +10,8 @@ export const OPTIONS = {
   players: [0, 'int', 'Start automatically once this many players have joined (0 = wait for someone to press Start)'],
   bots: ['auto', 'intOrAuto', "Bot count, or 'auto' to fill up to 4 tanks"],
   botTanks: ['', 'list', 'Tank types for bots, comma separated (random if empty)'],
-  difficulty: ['normal', 'enum', 'Bot skill', ['easy', 'normal', 'hard']],
+  difficulty: ['normal', 'enum', 'Bot difficulty preset', ['easy', 'normal', 'hard']],
+  skill: [5, 'int', 'Bot skill 1-5 on top of the difficulty preset (5 = full skill; players can change it in the lobby)'],
   mapSize: [360, 'int', 'Map edge length in metres (200-700)'],
   seed: [0, 'int', 'Map seed (0 = random)'],
   trees: [1, 'float', 'Scenery density multiplier (0-2)'],
@@ -64,6 +65,7 @@ export function resolveConfig(...sources) {
   const clampI = (v, a, b) => Math.max(a, Math.min(b, v));
   out.players = clampI(out.players, 0, 4);
   if (out.bots !== 'auto') out.bots = clampI(out.bots, 0, 4);
+  out.skill = clampI(out.skill, 1, 5);
   out.mapSize = clampI(out.mapSize, 200, 700);
   out.trees = Math.max(0, Math.min(2, out.trees));
   out.volume = Math.max(0, Math.min(1, out.volume));

@@ -11,6 +11,32 @@ const DIFFICULTY = {
   hard: { aimErr: 0.015, react: 0.18, lead: 1.0, turretMul: 1.0, sense: 190, fireTol: 0.8, lockMul: 1.0, smoke: 1 },
 };
 
+/**
+ * Bot skill 1-5, chosen in the lobby (or --skill). 5 is the difficulty preset unchanged; each step
+ * down scales it by k = (5 - skill) / 4, so 1 is k = 1: slower reactions and decisions, worse aim and
+ * leading, a slower turret, shorter awareness, sloppier trigger discipline and poorer use of pickups.
+ */
+export const SKILL_MAX = 5;
+export function botParams(difficulty, skill = SKILL_MAX) {
+  const base = DIFFICULTY[difficulty] || DIFFICULTY.normal;
+  const s = Math.max(1, Math.min(SKILL_MAX, Math.round(Number(skill)) || SKILL_MAX));
+  const k = (SKILL_MAX - s) / (SKILL_MAX - 1);
+  if (k === 0) return { ...base, think: 0.35, seek: 1, stuck: 1.0 }; // skill 5: exactly today's bots
+  return {
+    aimErr: base.aimErr * (1 + 3 * k), // normal: 0.045 rad -> 0.18 rad
+    react: base.react + 1.2 * k, // seconds before firing on a new target
+    lead: base.lead * (1 - 0.7 * k), // how well they lead moving targets
+    turretMul: base.turretMul * (1 - 0.4 * k),
+    sense: base.sense * (1 - 0.4 * k), // how far away they notice enemies
+    fireTol: base.fireTol * (1 + 0.8 * k), // fire before the gun is on target (wastes shots)
+    lockMul: base.lockMul * (1 + 1.5 * k), // slower seeker locks
+    smoke: base.smoke * (1 - 0.8 * k), // less likely to pop smoke when hurt
+    think: 0.35 * (1 + 2 * k), // seconds between re-picking targets and goals
+    seek: 1 - 0.5 * k, // how far they look for health / ammo / power-ups
+    stuck: 1.0 + 1.5 * k, // slower to notice being stuck
+  };
+}
+
 /** Preferred engagement distance per vehicle — this is what makes bots play each style. */
 const STYLE = {
   scout: { range: 14, strafe: 1.0, flee: 0.2 },
@@ -35,10 +61,10 @@ export function seekerSpeed(dist, g, pitch) {
 }
 
 export class Bot {
-  constructor(sim, tank, difficulty) {
+  constructor(sim, tank, difficulty, skill = SKILL_MAX) {
     this.g = sim;
     this.t = tank;
-    this.d = DIFFICULTY[difficulty] || DIFFICULTY.normal;
+    this.d = botParams(difficulty, skill);
     this.target = null;
     this.targetSince = 0;
     this.path = null;
@@ -86,7 +112,7 @@ export class Bot {
     const hpFrac = t.hp / t.maxHp;
     const ammoFrac = t.weapons.reduce((a, w) => a + w.ammo / WEAPONS[w.id].maxAmmo, 0) / t.weapons.length;
     const near = (kind, maxD) => {
-      let best = null, bd = maxD;
+      let best = null, bd = maxD * this.d.seek;
       for (const p of g.pickups) {
         if (!p.active || (kind && p.kind !== kind) || p.unreachable > g.time) continue;
         const d = Math.hypot(p.x - t.x, p.z - t.z);
@@ -160,7 +186,7 @@ export class Bot {
     this.thinkT -= dt; this.wanderT -= dt; this.strafeT -= dt;
     if (this.strafeT <= 0) { this.strafeDir *= -1; this.strafeT = 3 + Math.random() * 4; }
     let thinking = false;
-    if (this.thinkT <= 0) { this.thinkT = 0.35; thinking = true; this.pickTarget(); this.chooseGoal(); }
+    if (this.thinkT <= 0) { this.thinkT = this.d.think; thinking = true; this.pickTarget(); this.chooseGoal(); }
 
     // ---- navigation ----
     const goal = this.goal;
@@ -210,7 +236,7 @@ export class Bot {
     }
     turn = clamp(turn, -1, 1);
     if (Math.abs(throttle) > 0.4 && Math.abs(t.speed) < 1.2) this.stuckT += dt; else this.stuckT = Math.max(0, this.stuckT - dt);
-    if (this.stuckT > 1.0) { this.unstickT = 0.9 + Math.random() * 0.6; this.unstickTurn = Math.random() < 0.5 ? 1 : -1; this.stuckT = 0; this.path = null; }
+    if (this.stuckT > this.d.stuck) { this.unstickT = 0.9 + Math.random() * 0.6; this.unstickTurn = Math.random() < 0.5 ? 1 : -1; this.stuckT = 0; this.path = null; }
     if (this.unstickT > 0) { this.unstickT -= dt; throttle = -Math.sign(throttle || 1); turn = this.unstickTurn; }
     c.throttle = throttle;
     c.turn = turn;

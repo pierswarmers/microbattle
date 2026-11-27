@@ -634,9 +634,26 @@ export class HUD {
     const ch = 290, y0 = H * 0.3;
     this.seatCards(W, y0, ch, false);
     const blink = Math.floor(t * 2.5) % 2 === 0;
-    this.label(W / 2, y0 + ch + 40, g.you >= 0 ? '←/→ choose vehicle · SPACE ready · ENTER start now · N rename' : 'The battle is full — you are spectating', 18, blink ? '#ffdd33' : '#fff', 'center', 'middle', COMIC);
+    this.label(W / 2, y0 + ch + 40, g.you >= 0 ? '←/→ vehicle · ↑/↓ bot skill · SPACE ready · ENTER start now · N rename' : 'The battle is full — you are spectating', 18, blink ? '#ffdd33' : '#fff', 'center', 'middle', COMIC);
     this.label(W / 2, y0 + ch + 70, 'Starts when everyone is ready (or anyone presses ENTER). Empty seats are bots.', 13, '#dde', 'center');
     if (g.snap && g.snap.lt >= 0) this.label(W / 2, y0 + ch + 92, `auto-start in ${g.snap.lt}s`, 13, '#ccd', 'center');
+    this.skillPicker(W / 2, y0 + ch + 124, g.botSkill, g.you >= 0);
+  }
+
+  /** Bot skill 1-5 shown as five pips in the lobby. */
+  skillPicker(cx, cy, skill, canChange) {
+    const names = ['', 'ROOKIE', 'EASY', 'MEDIUM', 'TOUGH', 'FULL'];
+    const pw = 26, gap = 6, x0 = cx + 20;
+    this.roundRect(cx - 140, cy - 18, 440, canChange ? 54 : 36, 14, 'rgba(20,25,45,0.8)');
+    this.label(cx - 16, cy, 'BOT SKILL', 18, '#fff', 'right', 'middle', COMIC);
+    for (let i = 1; i <= 5; i++) {
+      const on = i <= skill;
+      this.roundRect(x0 + (i - 1) * (pw + gap), cy - 10, pw, 20, 6, on ? '#ffd133' : 'rgba(255,255,255,0.18)', on ? '#2a1033' : null);
+      this.label(x0 + (i - 1) * (pw + gap) + pw / 2, cy, String(i), 12, on ? '#2a1033' : '#ccd', 'center');
+    }
+    const xr = x0 + 5 * (pw + gap) + 10;
+    this.label(xr, cy, `${skill} · ${names[skill] || ''}`, 16, '#ffd133', 'left', 'middle', COMIC);
+    if (canChange) this.label(cx, cy + 22, '↑/↓ or 1–5 to change · applies to every bot', 11, '#ccd', 'center');
   }
 
   /** One card per seat: name, vehicle (with ◀ ▶ on your own), loadout and ready state. Compact for the intermission. */
