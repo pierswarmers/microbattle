@@ -77,7 +77,7 @@ export class Sim {
     for (const o of order) {
       const t = this.makeTank(o.type, o.slot, o.human, o.name);
       this.tanks.push(t);
-      if (!o.human) this.bots.push(new Bot(this, t, cfg.difficulty));
+      if (!o.human) this.bots.push(new Bot(this, t, cfg.difficulty, cfg.skill));
     }
     for (const t of this.tanks) this.spawnTank(t, true);
     this.state = 'countdown';
@@ -182,7 +182,7 @@ export class Sim {
     t.human = false;
     t.name = BOT_NAMES[slot * 2 + 1] + ' (bot)';
     t.input.fire = false;
-    this.bots.push(new Bot(this, t, this.cfg.difficulty));
+    this.bots.push(new Bot(this, t, this.cfg.difficulty, this.cfg.skill));
   }
 
   initPickups() {

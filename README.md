@@ -24,6 +24,7 @@ The server prints its address on your network, for example `http://192.168.1.20:
 - In the lobby, everyone picks a vehicle.
 - The match starts when everyone is ready, or when anyone presses **Enter**.
 - Empty seats are filled with bots.
+- In the lobby, **↑ / ↓** (or **1–5**) set the bot skill from 1 (rookie) to 5 (full skill, the default). Lower levels react and decide more slowly, aim and lead worse, turn their turret slower, notice enemies later and make poorer use of pickups. It applies to every bot from the next match start.
 - When a round ends (score or time limit), the results show with an intermission picker: everyone can change vehicle and press **Space** when ready. The next round starts when all players are ready, when anyone presses **Enter**, or after 20 seconds. Bots pick a new random vehicle each round.
 - Players can join in the middle of a match and take over a bot's seat. If a player leaves, a bot takes over their tank.
 
@@ -113,6 +114,7 @@ Run `node microbattle.js --help` for the full list.
 | `--mode any\|chase\|commander\|birdseye\|cycle` | any | Fix the view for everyone, let each player choose, or play a 4-round view cycle match (see above) |
 | `--players N` | 0 | Start automatically once N players have joined |
 | `--bots N\|auto` / `--bot-tanks a,b` / `--difficulty easy\|normal\|hard` | auto / random / normal | Bot settings |
+| `--skill 1-5` | 5 | Starting bot skill (players can change it in the lobby). 5 is the difficulty preset unchanged; each step down weakens the bots |
 | `--no-lobby` | lobby on | Start straight away with bots; players join while the match runs |
 | `--map-size N` / `--seed N` / `--trees F` | 360 / random / 1 | Map size, seed and tree density |
 | `--score-limit N` / `--time-limit S` / `--lives N` / `--respawn S` | 10 / 300 / 0 / 3.5 | Match rules |

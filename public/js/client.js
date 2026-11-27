@@ -453,11 +453,24 @@ export class Client {
     const I = this.input;
     this.pickControls();
     if (I.take('Enter') || I.padPressed(9)) { this.net.send({ t: 'start' }); this.sound.init(); this.audioStarted = true; }
+    // bot skill 1-5: W/S or up/down step it, 1-5 set it directly (the server applies it to the next match)
+    if (this.you >= 0) {
+      const cur = this.botSkill;
+      let sk = cur;
+      if (I.take('KeyW', 'ArrowUp') || I.padPressed(12)) sk = cur + 1;
+      if (I.take('KeyS', 'ArrowDown') || I.padPressed(13)) sk = cur - 1;
+      for (let i = 1; i <= 5; i++) if (I.take('Digit' + i, 'Numpad' + i)) sk = i;
+      sk = Math.max(1, Math.min(5, sk));
+      if (sk !== cur) { this.net.send({ t: 'lobby', skill: sk }); if (this.audioStarted) this.sound.play('switch', 0.6); }
+    }
     if (I.take('KeyN')) {
       const n = window.prompt('Your name:', this.name);
       if (n) { this.name = n.slice(0, 14); safeStore('mb_name', this.name); this.net.send({ t: 'hello', name: this.name, type: this.type }); }
     }
   }
+
+  /** Current bot skill 1-5 as the server last reported it. */
+  get botSkill() { return this.lobby.skill ?? (this.cfg && this.cfg.skill) ?? 5; }
 
   /** Vehicle choice and ready toggle: in the lobby and in the intermission between rounds. */
   pickControls() {

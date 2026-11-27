@@ -101,6 +101,11 @@ export class Room {
           if (t && t.human) { if (t.alive) t.nextType = m.type; else this.sim.setType(t, m.type); }
         }
         if (typeof m.ready === 'boolean') c.ready = m.ready;
+        // bot skill is picked before the match starts; bots are built with it at start()
+        if (Number.isInteger(m.skill) && this.sim.state === 'lobby' && m.skill >= 1 && m.skill <= 5 && m.skill !== this.cfg.skill) {
+          this.cfg.skill = m.skill;
+          this.log(`${c.name} set bot skill to ${m.skill}`);
+        }
         this.broadcastLobby();
         this.maybeAutoStart();
         break;
@@ -128,8 +133,8 @@ export class Room {
   }
 
   publicCfg() {
-    const { mode, mapSize, seed, trees, scoreLimit, timeLimit, lives, pickups, powerups, zoom, quality, difficulty, lobby, players, season } = this.cfg;
-    return { mode, mapSize, seed, trees, scoreLimit, timeLimit, lives, pickups, powerups, zoom, quality, difficulty, lobby, players, season };
+    const { mode, mapSize, seed, trees, scoreLimit, timeLimit, lives, pickups, powerups, zoom, quality, difficulty, skill, lobby, players, season } = this.cfg;
+    return { mode, mapSize, seed, trees, scoreLimit, timeLimit, lives, pickups, powerups, zoom, quality, difficulty, skill, lobby, players, season };
   }
 
   humans() { return [...this.clients.values()].filter((c) => c.hello && c.slot >= 0); }
@@ -217,7 +222,7 @@ export class Room {
   }
 
   broadcastLobby() {
-    const msg = JSON.stringify({ t: 'lobby', state: this.sim.state, players: [...this.clients.values()].filter((c) => c.hello).map((c) => ({ id: c.id, slot: c.slot, name: c.name, type: c.type, ready: c.ready })) });
+    const msg = JSON.stringify({ t: 'lobby', state: this.sim.state, skill: this.cfg.skill, players: [...this.clients.values()].filter((c) => c.hello).map((c) => ({ id: c.id, slot: c.slot, name: c.name, type: c.type, ready: c.ready })) });
     for (const c of this.clients.values()) if (c.hello) c.ws.send(msg);
   }
 
